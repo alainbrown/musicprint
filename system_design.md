@@ -178,11 +178,11 @@ To rigorously test the system without encoding 100M tracks immediately, we const
 
 ### A. Feature Caching Strategy (Dev Phase)
 To accelerate the iterative development of the **Binary Adapter**, we will implement a feature caching mechanism.
-*   **The Problem:** Running the full MERT backbone for every training epoch is computationally expensive and redundant.
-*   **The Solution:** During the first pass of the 10k training tracks, we will save the raw 768d MERT vectors to disk.
+*   **The Problem:** Running the full MERT backbone for every training epoch is computationally expensive.
+*   **The Solution:** During the first pass, we save the raw 768d MERT vectors to disk.
 *   **Implementation:** The pipeline will support a `--cache-features` flag.
     *   **Enabled:** Reads/Writes `.npy` or `.pt` files from a local cache directory.
-    *   **Disabled (Production):** Uses the "Stream-Process-Discard" mode (Zero-copy GPU pipeline).
+    *   **Disabled (Production):** Uses the **GPU-Direct Pipeline** (DALI $\to$ VRAM).
 *   **Impact:** Reduces Adapter training time from hours to minutes.
 
 ### B. Incremental Rollout (Production)
@@ -205,8 +205,8 @@ Scaling from 1 to 100 million tracks will be done in phases to manage compute co
 ### A. Development & Build Pipeline (Cloud/Vast.ai)
 *   **Language:** Python 3.10+
 *   **Framework:** **PyTorch** (Backbone and Adapter training).
-*   **Audio Processing:** `librosa` / `scipy` (Preprocessing and augmentation).
-*   **Containerization:** **Docker** (Reproducible CUDA/FFMPEG environment).
+*   **Audio Processing:** **NVIDIA DALI** (GPU-accelerated Loading, Decoding, Resampling).
+*   **Containerization:** **Docker** (Reproducible CUDA environment).
 *   **Model Conversion:** `coremltools` (PyTorch -> CoreML conversion).
 
 ### B. Deployment & Inference (iPhone 13+)
