@@ -13,7 +13,7 @@ Both proposed architectures utilize this indexing strategy to solve the storage 
 *   **Solution:** We assume songs have limited unique "textures" (Verse, Chorus, Bridge, Solo).
 *   **Algorithm:**
     1.  **Scan Phase:** Generate a hash every 1s (e.g., 180 hashes for a 3min song).
-    2.  **Greedy Deduplication (The "Sphere" Method):**
+    2.  **Greedy Deduplication (The "Sphere" Method):
         *   Keep hash $H_t$ only if it is sufficiently different (Hamming Distance > Threshold) from all previously kept hashes for that song.
     3.  **Adaptive Cap:**
         *   Simple Pop songs: ~2-3 hashes.
@@ -39,8 +39,8 @@ Both proposed architectures utilize this indexing strategy to solve the storage 
 ## 3. Detailed Architecture Specs
 
 ### Option A: MERT + Binary Adapter (The "Safe" Path)
-*   **Input:** 16kHz Audio (5s window).
-*   **Backbone:** `m-a-p/MERT-v1-95M` (HuggingFace), quantized to `int4` via CoreML.
+*   **Input:** 24kHz Audio (5s window). *[Correction: MERT-v1-95M is trained on 24kHz]*
+*   **Backbone:** `m-a-p/MERT-v1-95M` (HuggingFace), converted to **Float16** via CoreML.
 *   **Head (The "Adapter"):**
     *   `Linear(768 -> 256)` -> `ReLU`
     *   `Linear(256 -> 64)` -> `Tanh` -> `Sign()`
@@ -52,11 +52,18 @@ Both proposed architectures utilize this indexing strategy to solve the storage 
     *   **Lookup:** XOR + PopCount (Hamming Distance).
 
 ### Option B: Custom Binary Conformer (The "Purist" Path)
-*   **Input:** Log-Mel Spectrogram.
+*   **Input:** 24kHz Log-Mel Spectrogram.
 *   **Backbone:** 4x Convolution Blocks -> 4x Transformer Encoder Layers -> Projection Head.
 *   **Training:**
     *   Must simulate real-world degradation (GSM compression, cafe noise, pitch shift) *during* training to force the model to learn invariance.
 *   **Advantage:** Full control over every parameter. Can be optimized specifically for mobile energy efficiency.
+
+### 3.C. Training Augmentations (Invariance Pipeline)
+To ensure the "Adapter" ignores background noise and acoustic distortions, training must include:
+*   **Background Noise:** Mixing in Cafe/Babble/Traffic sounds at 0-10dB SNR.
+*   **Reverb (RIR):** Convolving with Room Impulse Responses (small clubs, large rooms) using datasets like MIT-RIR.
+*   **Time/Pitch Shift:** Elastic stretching (0.9x - 1.1x) and pitch modulation (+/- 2 semitones).
+*   **Frequency Masking:** Simulating microphone occlusion by dropping random spectral bands.
 
 ### Option C: Neural Token RAG (The "Search" Path)
 *   **Concept:** Treat audio like text. Use a Neural Codec to convert sound into a sequence of "words" (discrete tokens).
@@ -207,20 +214,17 @@ Scaling from 1 to 100 million tracks will be done in phases to manage compute co
 *   **Neural Inference:** **CoreML** (Optimized MERT execution on the Neural Engine).
 *   **Search Engine:** **Custom Binary Searcher** (Optimized XOR + PopCount logic).
 *   **Acceleration:** **SIMD / Accelerate Framework** (Hardware-accelerated binary math).
+*   **Database:** **Memory-Mapped Binary File** (Efficient random access for 2.5GB index).
 
 
 ---
 
 ## 9. Citations
 
-*   **MERT Model:** Li, Y., et al. (2024). "MERT: Acoustic Music Understanding Model with Large-Scale Self-supervised Training". International Conference on Learning Representations (ICLR). [arXiv:2306.01075]
-*   **MARBLE Benchmark:** Yuan, Y., et al. (2023). "MARBLE: Music Audio Representation Benchmark for Universal Evaluation". Neural Information Processing Systems (NeurIPS) Track on Datasets and Benchmarks.
-*   **Shazam Algorithm:** Wang, A. L. (2003). "An Industrial-Strength Audio Search Algorithm". Proceedings of the International Conference on Music Information Retrieval (ISMIR).
-*   **Conformer:** Gulati, A., et al. (2020). "Conformer: Convolution-augmented Transformer for Speech Recognition". Interspeech.
-*   **NVIDIA DALI:** "NVIDIA Data Loading Library (DALI) Documentation". [developer.nvidia.com/dali]
-
----
-
-
+*   **MERT Model:** Li, Y., et al. (2024). *"MERT: Acoustic Music Understanding Model with Large-Scale Self-supervised Training"*. International Conference on Learning Representations (ICLR). [arXiv:2306.01075]
+*   **MARBLE Benchmark:** Yuan, Y., et al. (2023). *"MARBLE: Music Audio Representation Benchmark for Universal Evaluation"*. Neural Information Processing Systems (NeurIPS) Track on Datasets and Benchmarks.
+*   **Shazam Algorithm:** Wang, A. L. (2003). *"An Industrial-Strength Audio Search Algorithm"*. Proceedings of the International Conference on Music Information Retrieval (ISMIR).
+*   **Conformer:** Gulati, A., et al. (2020). *"Conformer: Convolution-augmented Transformer for Speech Recognition"*. Interspeech.
+*   **NVIDIA DALI:** *"NVIDIA Data Loading Library (DALI) Documentation"*. [developer.nvidia.com/dali]
 
 ---
