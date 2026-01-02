@@ -1,109 +1,52 @@
 import argparse
-import os
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from system import MusicPrintSystem
+from datamodule import MusicDataModule
 import torch
-import torch.optim as optim
-from tqdm import tqdm
-import time
 
-from models.mert_adapter import MERTAdapter
-from models.loss import SupervisedContrastiveLoss
-from data.dali_loader import DALIGPULoader
-
-def train(args):
-    # 1. Setup Device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Training on: {device}")
-
-    # 2. Setup Data Loader (GPU-Direct)
-    print(f"Initializing DALI Pipeline from {args.data_dir}...")
-    # DALI handles the epoch logic internally if we set the size correctly
-    # For now, we assume infinite streaming or fixed epoch size
-    loader = DALIGPULoader(
-        file_root=args.data_dir,
-        batch_size=args.batch_size,
-        device_id=0 if torch.cuda.is_available() else None
+def main(args):
+    # Set matrix precision for H200 (Tensor Cores)
+    torch.set_float32_matmul_precision('medium') # or 'high'
+    
+    # 1. Init Data
+    dm = MusicDataModule(data_dir=args.data_dir, batch_size=args.batch_size)
+    
+    # 2. Init System
+    system = MusicPrintSystem(lr=args.lr)
+    
+    # 3. Init Callbacks
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=args.checkpoint_dir,
+        filename='mert-adapter-{epoch:02d}-{train_loss:.2f}',
+        save_top_k=3,
+        monitor='train_loss',
+        mode='min'
     )
-
-    # 3. Setup Model
-    print("Loading MERT Adapter...")
-    model = MERTAdapter(output_dim=64).to(device)
     
-    # Optimizer - Only optimize adapter parameters (backbone is frozen in model __init__)
-    optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+    # 4. Init Trainer
+    trainer = pl.Trainer(
+        accelerator="gpu",
+        devices="auto", # Will auto-detect all 8 GPUs
+        strategy="ddp_find_unused_parameters_true", # Needed for frozen backbone
+        precision="bf16-mixed", # H200 Sweet Spot
+        max_epochs=args.epochs,
+        callbacks=[checkpoint_callback, LearningRateMonitor(logging_interval='step')],
+        log_every_n_steps=10,
+        default_root_dir=args.checkpoint_dir
+    )
     
-    # Loss Function
-    criterion = SupervisedContrastiveLoss(temperature=0.07).to(device)
-
-    # 4. Training Loop
-    model.train()
-    print("Starting Training...")
-    
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
-    
-    step = 0
-    
-    # DALI iterators are infinite by default unless we define size. 
-    # We will loop based on a fixed number of steps per epoch for this prototype.
-    steps_per_epoch = 100 # Adjust based on dataset size: num_files // batch_size
-    
-    for epoch in range(args.epochs):
-        epoch_loss = 0.0
-        start_time = time.time()
-        
-        # progress bar
-        pbar = tqdm(enumerate(loader), total=steps_per_epoch, desc=f"Epoch {epoch+1}/{args.epochs}")
-        
-        for i, batch in pbar:
-            if i >= steps_per_epoch:
-                break
-                
-            # DALI output: [{'audio': tensor, 'label': tensor}]
-            audio = batch[0]["audio"].to(device) # (B, Time, 1)
-            labels = batch[0]["label"].to(device).long().squeeze() # (B,)
-            
-            # Squeeze channel dim if present
-            if audio.dim() == 3:
-                audio = audio.squeeze(-1)
-
-            # Zero Gradients
-            optimizer.zero_grad()
-            
-            # Forward Pass
-            # Result: (Batch, 64) normalized vectors
-            embeddings = model(audio)
-            
-            # Compute Loss
-            # SupCon loss pushes same-label embeddings close, diff-label far
-            loss = criterion(embeddings, labels)
-            
-            # Backward Pass
-            loss.backward()
-            optimizer.step()
-            
-            # Logging
-            loss_val = loss.item()
-            epoch_loss += loss_val
-            pbar.set_postfix({"loss": f"{loss_val:.4f}"})
-            
-            step += 1
-            
-        avg_loss = epoch_loss / steps_per_epoch
-        print(f"Epoch {epoch+1} Complete. Avg Loss: {avg_loss:.4f}. Time: {time.time() - start_time:.2f}s")
-        
-        # Save Checkpoint
-        save_path = os.path.join(args.checkpoint_dir, f"mert_adapter_ep{epoch+1}.pt")
-        torch.save(model.state_dict(), save_path)
-        print(f"Saved checkpoint to {save_path}")
-
-    print("Training Complete.")
+    # 5. Train
+    print(f"Starting training on {trainer.num_devices} GPUs with strategy {trainer.strategy}")
+    trainer.fit(system, datamodule=dm)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train MERT Adapter with SupCon Loss")
-    parser.add_argument("--data_dir", type=str, default="/app/data", help="Path to audio files")
-    parser.add_argument("--checkpoint_dir", type=str, default="/app/checkpoints", help="Save path")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_dir", type=str, default="/app/data")
+    parser.add_argument("--checkpoint_dir", type=str, default="/app/checkpoints")
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--lr", type=float, default=1e-4)
     
     args = parser.parse_args()
-    train(args)
+    main(args)
