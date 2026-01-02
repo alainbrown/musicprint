@@ -163,6 +163,32 @@ To rigorously test the system without encoding 100M tracks immediately, we const
     *   Load MERT.
     *   Define the Adapter class.
     *   Write a mock "forward pass" script to verify dimensions.
-3.  **Data:** Write `data/loader.py` to handle audio loading + on-the-fly augmentation (noise/speed).
+
+
+---
+
+## 7. Development & Scaling Strategy
+
+### A. Feature Caching Strategy (Dev Phase)
+To accelerate the iterative development of the **Binary Adapter**, we will implement a feature caching mechanism.
+*   **The Problem:** Running the full MERT backbone for every training epoch is computationally expensive and redundant.
+*   **The Solution:** During the first pass of the 10k training tracks, we will save the raw 768d MERT vectors to disk.
+*   **Implementation:** The pipeline will support a `--cache-features` flag.
+    *   **Enabled:** Reads/Writes `.npy` or `.pt` files from a local cache directory.
+    *   **Disabled (Production):** Uses the "Stream-Process-Discard" mode (Zero-copy GPU pipeline).
+*   **Impact:** Reduces Adapter training time from hours to minutes.
+
+### B. Incremental Rollout (Production)
+Scaling from 1 to 100 million tracks will be done in phases to manage compute costs and validate market fit.
+
+1.  **Phase 1: Alpha (1M Tracks):** Top global hits + Viral TikTok tracks.
+    *   **Index Size:** ~30 MB.
+    *   **Goal:** Verify accuracy on "90% of daily queries."
+2.  **Phase 2: Beta (10M Tracks):** Full mainstream discographies.
+    *   **Index Size:** ~300 MB.
+    *   **Goal:** Expand depth for music enthusiasts.
+3.  **Phase 3: Gold (100M Tracks):** Comprehensive global catalog.
+    *   **Index Size:** ~2.5 GB.
+    *   **Goal:** Full Shazam parity (Offline).
 
 ---
