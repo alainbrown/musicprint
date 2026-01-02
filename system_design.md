@@ -207,6 +207,20 @@ Scaling from 1 to 100 million tracks will be done in phases to manage compute co
 *   **Neural Inference:** **CoreML** (Optimized MERT execution on the Neural Engine).
 *   **Search Engine:** **Custom Binary Searcher** (Optimized XOR + PopCount logic).
 *   **Acceleration:** **SIMD / Accelerate Framework** (Hardware-accelerated binary math).
-*   **Database:** **Memory-Mapped Binary File** (Efficient random access for 2.5GB index).
+
+
+---
+
+## 9. Citations
+
+*   **MERT Model:** Li, Y., et al. (2024). "MERT: Acoustic Music Understanding Model with Large-Scale Self-supervised Training". International Conference on Learning Representations (ICLR). [arXiv:2306.01075]
+*   **MARBLE Benchmark:** Yuan, Y., et al. (2023). "MARBLE: Music Audio Representation Benchmark for Universal Evaluation". Neural Information Processing Systems (NeurIPS) Track on Datasets and Benchmarks.
+*   **Shazam Algorithm:** Wang, A. L. (2003). "An Industrial-Strength Audio Search Algorithm". Proceedings of the International Conference on Music Information Retrieval (ISMIR).
+*   **Conformer:** Gulati, A., et al. (2020). "Conformer: Convolution-augmented Transformer for Speech Recognition". Interspeech.
+*   **NVIDIA DALI:** "NVIDIA Data Loading Library (DALI) Documentation". [developer.nvidia.com/dali]
+
+---
+
+
 
 ---
