@@ -189,6 +189,24 @@ Scaling from 1 to 100 million tracks will be done in phases to manage compute co
     *   **Goal:** Expand depth for music enthusiasts.
 3.  **Phase 3: Gold (100M Tracks):** Comprehensive global catalog.
     *   **Index Size:** ~2.5 GB.
-    *   **Goal:** Full Shazam parity (Offline).
+
+
+---
+
+## 8. Technology Stack
+
+### A. Development & Build Pipeline (Cloud/Vast.ai)
+*   **Language:** Python 3.10+
+*   **Framework:** **PyTorch** (Backbone and Adapter training).
+*   **Audio Processing:** `librosa` / `scipy` (Preprocessing and augmentation).
+*   **Containerization:** **Docker** (Reproducible CUDA/FFMPEG environment).
+*   **Model Conversion:** `coremltools` (PyTorch -> CoreML conversion).
+
+### B. Deployment & Inference (iPhone 13+)
+*   **Interface:** **Swift / SwiftUI** (Core application logic and UI).
+*   **Neural Inference:** **CoreML** (Optimized MERT execution on the Neural Engine).
+*   **Search Engine:** **Custom Binary Searcher** (Optimized XOR + PopCount logic).
+*   **Acceleration:** **SIMD / Accelerate Framework** (Hardware-accelerated binary math).
+*   **Database:** **Memory-Mapped Binary File** (Efficient random access for 2.5GB index).
 
 ---
