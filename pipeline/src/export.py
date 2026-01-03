@@ -50,6 +50,6 @@ def export_to_coreml(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint_path", type=str, required=True)
-    parser.add_argument("--output_dir", type=str, default="/app/checkpoints/coreml")
+    parser.add_argument("--output_dir", type=str, default="/app/release")
     args = parser.parse_args()
     export_to_coreml(args)

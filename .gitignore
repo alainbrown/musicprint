@@ -1,0 +1,35 @@
+# Environments
+.venv/
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Pipeline Caches
+pipeline/cache/
+pipeline/data/
+pipeline/checkpoints/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Deep Learning weights (Always large, avoid committing)
+*.pt
+*.ckpt
+*.pth
+*.h5
+*.weights
+
+# CoreML models (Large packages)
+# We ignore them globally, but can force-add a 'blessed' one later
+*.mlpackage/
+*.mlmodel
+
+# Local environment variables
+.env
+.env.local

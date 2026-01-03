@@ -15,6 +15,7 @@ services:
       - ./data:/app/data
       - ./cache:/app/cache
       - ./checkpoints:/app/checkpoints
+      - ./release:/app/release # Exported CoreML models
       - ./notebooks:/app/notebooks # New volume for notebooks
     ports:
       - "8888:8888"
