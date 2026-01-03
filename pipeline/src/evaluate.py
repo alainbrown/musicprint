@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import os
 import numpy as np
+import wandb
 from system import MusicPrintSystem
 from datamodule import MusicDataModule
 from data.dali_loader import DALIGPULoader
@@ -67,6 +68,9 @@ def build_adaptive_index_memory(system, loader, device, limit=None):
     return torch.cat(index_hashes), torch.cat(index_ids)
 
 def evaluate_real_world(args):
+    # Initialize WandB
+    wandb.init(project="musicprint", job_type="evaluation", config=args)
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Evaluating on: {device}")
 
@@ -113,6 +117,9 @@ def evaluate_real_world(args):
     correct = 0
     total = 0
     
+    # Failure Table: [Audio, True ID, Pred ID]
+    failure_table = wandb.Table(columns=["audio", "true_id", "pred_id"])
+    
     with torch.no_grad():
         for i, batch in tqdm(enumerate(query_loader)):
             data = batch[0]
@@ -130,16 +137,28 @@ def evaluate_real_world(args):
             best_idx = torch.argmax(sims, dim=1)
             pred_ids = db_ids[best_idx]
             
-            correct += (pred_ids == labels).sum().item()
+            # Stats
+            is_correct = (pred_ids == labels)
+            correct += is_correct.sum().item()
             total += labels.size(0)
             
-            # Since validation set is small (~500), we run full pass
+            # Log Failures (Limit to first 50 to avoid massive upload)
+            if failure_table.data.__len__() < 50:
+                failures = torch.where(~is_correct)[0]
+                for idx in failures:
+                    # Log audio to WandB (needs to be CPU numpy)
+                    audio_sample = audio[idx].cpu().numpy()
+                    wandb_audio = wandb.Audio(audio_sample, sample_rate=24000, caption="Query")
+                    failure_table.add_data(wandb_audio, labels[idx].item(), pred_ids[idx].item())
             
     recall = (correct / total) * 100.0
     print(f"\n🌟 Real-World Evaluation 🌟")
     print(f"Test Condition: Random 5s Crop (Unaligned) + Noise + Speed Shift")
     print(f"Recall@1: {recall:.2f}%")
     print(f"Total Queries: {total}")
+    
+    wandb.log({"recall_at_1": recall, "failures": failure_table})
+    wandb.finish()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

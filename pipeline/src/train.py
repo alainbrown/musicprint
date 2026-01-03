@@ -1,6 +1,7 @@
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.loggers import WandbLogger
 from system import MusicPrintSystem
 from datamodule import MusicDataModule
 import torch
@@ -15,7 +16,9 @@ def main(args):
     # 2. Init System
     system = MusicPrintSystem(lr=args.lr)
     
-    # 3. Init Callbacks
+    # 3. Init Loggers & Callbacks
+    wandb_logger = WandbLogger(project="musicprint", log_model="all")
+    
     checkpoint_callback = ModelCheckpoint(
         dirpath=args.checkpoint_dir,
         filename='mert-adapter-{epoch:02d}-{val_loss:.2f}',
@@ -26,6 +29,7 @@ def main(args):
     
     # 4. Init Trainer
     trainer = pl.Trainer(
+        logger=wandb_logger,
         accelerator="gpu",
         devices="auto", 
         strategy="ddp_find_unused_parameters_true",

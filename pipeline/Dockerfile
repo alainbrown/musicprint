@@ -7,7 +7,8 @@ RUN pip install --no-cache-dir \
     jupyterlab \
     ipywidgets \
     pytorch-lightning \
-    coremltools
+    coremltools \
+    wandb
 
 WORKDIR /app
 
