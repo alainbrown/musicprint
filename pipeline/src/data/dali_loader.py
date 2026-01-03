@@ -34,7 +34,6 @@ class DALIGPULoader:
 @pipeline_def
 def audio_pipeline(sample_rate, window_samples, file_root=None, file_list=None, shard_id=0, num_shards=1, augment=False):
     # 1. Read files
-    # Use file_root OR file_list
     encoded, label = fn.readers.file(
         file_root=file_root,
         file_list=file_list,
@@ -44,13 +43,25 @@ def audio_pipeline(sample_rate, window_samples, file_root=None, file_list=None, 
         name="Reader"
     )
     
-    # 2. Decode & Resample
-    audio, _ = fn.decoders.audio(
-        encoded,
-        sample_rate=sample_rate,
-        dtype=types.FLOAT,
-        downmix=True
-    )
+    # 2. Decode & Resample (with Speed Perturbation if augmenting)
+    if augment:
+        # Speed Perturbation: +/- 5%
+        # We achieve this by slightly changing the target sample rate
+        # 0.95 * 24000 = 22800, 1.05 * 24000 = 25200
+        speed_rate = fn.random.uniform(range=[sample_rate * 0.95, sample_rate * 1.05])
+        audio, _ = fn.decoders.audio(
+            encoded,
+            sample_rate=speed_rate,
+            dtype=types.FLOAT,
+            downmix=True
+        )
+    else:
+        audio, _ = fn.decoders.audio(
+            encoded,
+            sample_rate=sample_rate,
+            dtype=types.FLOAT,
+            downmix=True
+        )
     
     # 3. Augmentations (Train Mode Only)
     if augment:
