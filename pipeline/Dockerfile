@@ -6,7 +6,8 @@ RUN pip install --no-cache-dir \
     transformers \
     jupyterlab \
     ipywidgets \
-    pytorch-lightning
+    pytorch-lightning \
+    coremltools
 
 WORKDIR /app
 
