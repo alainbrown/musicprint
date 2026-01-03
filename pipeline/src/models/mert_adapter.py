@@ -24,8 +24,14 @@ class MERTAdapter(nn.Module):
         """
         Input: (Batch, Time) audio tensor resampled to 24kHz
         """
+        # Normalization (Mean=0, Std=1) for the current batch
+        # This makes the model invariant to global volume changes
+        with torch.no_grad():
+            mean = audio_tensors.mean(dim=-1, keepdim=True)
+            std = audio_tensors.std(dim=-1, keepdim=True)
+            audio_tensors = (audio_tensors - mean) / (std + 1e-7)
+
         # MERT expects inputs in a specific dict format
-        # In a real training loop, we'd handle padding/masks here
         outputs = self.backbone(audio_tensors)
         
         # Mean pooling over the sequence dimension
