@@ -5,7 +5,7 @@ from nvidia.dali.plugin.pytorch import DALIGenericIterator
 import os
 
 class DALIGPULoader:
-    def __init__(self, file_root, batch_size, device_id=0, shard_id=0, num_shards=1, sample_rate=24000, window_secs=5.0, augment=False):
+    def __init__(self, batch_size, file_root=None, file_list=None, device_id=0, shard_id=0, num_shards=1, sample_rate=24000, window_secs=5.0, augment=False):
         self.batch_size = batch_size
         window_samples = int(window_secs * sample_rate)
         
@@ -13,9 +13,10 @@ class DALIGPULoader:
             batch_size=batch_size,
             num_threads=4,
             device_id=device_id,
-            shard_id=shard_id,       # Distributed: Who am I?
-            num_shards=num_shards,   # Distributed: How many total?
+            shard_id=shard_id,
+            num_shards=num_shards,
             file_root=file_root,
+            file_list=file_list, # Pass file_list
             sample_rate=sample_rate,
             window_samples=window_samples,
             augment=augment
@@ -31,10 +32,12 @@ class DALIGPULoader:
         )
 
 @pipeline_def
-def audio_pipeline(file_root, sample_rate, window_samples, shard_id=0, num_shards=1, augment=False):
+def audio_pipeline(sample_rate, window_samples, file_root=None, file_list=None, shard_id=0, num_shards=1, augment=False):
     # 1. Read files
+    # Use file_root OR file_list
     encoded, label = fn.readers.file(
         file_root=file_root,
+        file_list=file_list,
         random_shuffle=True,
         shard_id=shard_id,
         num_shards=num_shards,

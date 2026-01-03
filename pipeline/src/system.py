@@ -36,6 +36,20 @@ class MusicPrintSystem(pl.LightningModule):
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
         return loss
 
+    def validation_step(self, batch, batch_idx):
+        data_dict = batch[0]
+        audio = data_dict["audio"]
+        labels = data_dict["label"].squeeze().long()
+        
+        if audio.dim() == 3:
+            audio = audio.squeeze(-1)
+            
+        embeddings = self(audio)
+        loss = self.criterion(embeddings, labels)
+        
+        self.log("val_loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
+        return loss
+
     def predict_step(self, batch, batch_idx):
         # Batch is (B, Time, 1) from DALI
         # We need to process each song in the batch

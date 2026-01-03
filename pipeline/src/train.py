@@ -18,9 +18,9 @@ def main(args):
     # 3. Init Callbacks
     checkpoint_callback = ModelCheckpoint(
         dirpath=args.checkpoint_dir,
-        filename='mert-adapter-{epoch:02d}-{train_loss:.2f}',
+        filename='mert-adapter-{epoch:02d}-{val_loss:.2f}',
         save_top_k=3,
-        monitor='train_loss',
+        monitor='val_loss',
         mode='min'
     )
     
