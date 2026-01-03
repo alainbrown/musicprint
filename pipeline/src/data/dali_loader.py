@@ -43,65 +43,39 @@ def audio_pipeline(sample_rate, window_samples, file_root=None, file_list=None, 
         name="Reader"
     )
     
-    # 2. Decode & Resample (with Speed Perturbation if augmenting)
-    if augment:
-        # Speed Perturbation: +/- 5%
-        # We achieve this by slightly changing the target sample rate
-        # 0.95 * 24000 = 22800, 1.05 * 24000 = 25200
-        speed_rate = fn.random.uniform(range=[sample_rate * 0.95, sample_rate * 1.05])
-        audio, _ = fn.decoders.audio(
-            encoded,
-            sample_rate=speed_rate,
-            dtype=types.FLOAT,
-            downmix=True
-        )
-    else:
-        audio, _ = fn.decoders.audio(
-            encoded,
-            sample_rate=sample_rate,
-            dtype=types.FLOAT,
-            downmix=True
-        )
+    # 2. Decode & Resample
+    # We disable dynamic speed perturbation for stability in V1.
+    audio, _ = fn.decoders.audio(
+        encoded,
+        sample_rate=sample_rate,
+        dtype=types.FLOAT,
+        downmix=True
+    )
     
     # 3. Augmentations (Train Mode Only)
     if augment:
-        # A. Random Speed/Pitch Shift (+/- 5%)
-        # DALI doesn't have a direct 'pitch_shift' operator for raw audio in the graph easily
-        # without external libraries, but we can simulate speed change via resampling
-        # or use a random time stretch if available.
-        # For V1, we will stick to simpler additive noise which is natively supported.
-        
-        # B. Add Gaussian Noise (Simulate sensor noise)
-        # 50% chance to apply noise
+        # A. Add Gaussian Noise
         should_noise = fn.random.coin_flip(probability=0.5)
-        noise = fn.random.normal(mean=0.0, stddev=0.01) # Low level noise
+        noise = fn.random.normal(mean=0.0, stddev=0.01)
         audio = audio + (noise * should_noise)
         
-        # C. Volume Perturbation (0.5x to 1.5x)
+        # B. Volume Perturbation
         gain = fn.random.uniform(range=[0.5, 1.5])
         audio = audio * gain
 
     # 4. Fixed-length Window
     if augment:
         # Robust Random Crop
-        # 1. Get length of the audio
         audio_shape = fn.shapes(audio)
-        # 2. Extract time dimension (dim 0)
-        # DALI shapes returns [d0, d1, ...], we need just d0 as a scalar-like
         n_samples = fn.slice(audio_shape, 0, 1, axes=[0])
         
-        # 3. Calculate range: max(0, length - window)
-        # Note: DALI math ops work on tensors
         diff = n_samples - window_samples
         max_anchor = fn.math.max(diff, 0)
         
-        # 4. Generate random float 0-1 and scale to range
         rand_factor = fn.random.uniform(range=[0.0, 1.0])
-        anchor = max_anchor * rand_factor
+        # IMPORTANT: Cast to int64 for slicing
+        anchor = fn.cast(max_anchor * rand_factor, dtype=types.INT64)
         
-        # 5. Slice with padding for safety
-        # We cast anchor to int via slice args usually, but DALI needs specific types
-        # fn.slice can take tensor anchors.
         audio = fn.slice(audio, anchor, window_samples, axes=[0], out_of_bounds_policy="pad")
         
     else:
