@@ -232,3 +232,117 @@ optimum_df = find_optimum(usage_frequencies, master_tokenizer)
 # *   **Storage Format:** Fixed-Width uint16
 # *   **Artifact:** `release/music_vocab_final.json`
 
+# %% [markdown]
+# ## 6. Clustered Binary Format Prototype
+# In this section, we verify the logic for the "Range Tables" and "Token Blobs".
+# We use a small sample to simulate the binary encoding and lookup process.
+
+# %%
+import struct
+
+def prototype_clustered_format(sample_size=1000):
+    # 1. Load Production Tokenizer
+    tokenizer_path = "../release/music_vocab_final.json"
+    if not os.path.exists(tokenizer_path):
+        print("Error: Production tokenizer not found. Run training first.")
+        return
+    tokenizer = Tokenizer.from_file(tokenizer_path)
+
+    # 2. Fetch Sample Ordered by Artist/Release
+    conn = get_db_connection()
+    cur = conn.cursor()
+    query = f"""
+        SELECT 
+            ac.name as artist_name,
+            r.name as album_name,
+            rec.name as song_title
+        FROM musicbrainz.recording rec
+        JOIN musicbrainz.track t ON t.recording = rec.id
+        JOIN musicbrainz.medium m ON t.medium = m.id
+        JOIN musicbrainz.release r ON m.release = r.id
+        JOIN musicbrainz.artist_credit ac ON rec.artist_credit = ac.id
+        ORDER BY ac.id, r.id
+        LIMIT {sample_size}
+    """
+    cur.execute(query)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    # 3. Build Range Tables and Token Blobs
+    artist_ranges = [] # (start_id, artist_name)
+    album_ranges = []  # (start_id, album_name)
+    title_blob = b""
+    title_offsets = [] # Byte offset for each title
+
+    last_artist = None
+    last_album = None
+
+    print(f"Packing {len(rows)} songs...")
+
+    for i, (artist, album, title) in enumerate(rows):
+        # Artist Range
+        if artist != last_artist:
+            artist_ranges.append((i, artist))
+            last_artist = artist
+        
+        # Album Range
+        if album != last_album:
+            album_ranges.append((i, album))
+            last_album = album
+            
+        # Title Tokenization
+        tokens = tokenizer.encode(str(title)).ids
+        title_offsets.append(len(title_blob))
+        # Pack as uint16 (Fixed 65k strategy)
+        title_blob += struct.pack(f"<{len(tokens)}H", *tokens)
+
+    # Add final offset for length calculation
+    title_offsets.append(len(title_blob))
+
+    print(f"Created {len(artist_ranges)} Artist clusters.")
+    print(f"Created {len(album_ranges)} Album clusters.")
+    print(f"Title Blob Size: {len(title_blob)} bytes.")
+
+    # 4. Verify Lookup Logic
+    def lookup(song_id):
+        # Find Artist (Binary search in real app, simple scan for prototype)
+        artist_name = "Unknown"
+        for start_id, name in reversed(artist_ranges):
+            if song_id >= start_id:
+                artist_name = name
+                break
+        
+        # Find Album
+        album_name = "Unknown"
+        for start_id, name in reversed(album_ranges):
+            if song_id >= start_id:
+                album_name = name
+                break
+                
+        # Find and Decode Title
+        start_off = title_offsets[song_id]
+        end_off = title_offsets[song_id + 1]
+        raw_tokens = title_blob[start_off:end_off]
+        # Unpack uint16
+        num_tokens = len(raw_tokens) // 2
+        token_ids = struct.unpack(f"<{num_tokens}H", raw_tokens)
+        title_decoded = tokenizer.decode(list(token_ids))
+        
+        return artist_name, album_name, title_decoded
+
+    # Test on a few IDs
+    test_ids = [0, 50, 100, len(rows)-1]
+    print("\n--- Lookup Verification ---")
+    for tid in test_ids:
+        artist, album, title = lookup(tid)
+        print(f"ID {tid:3}: {artist} | {album} | {title}")
+        # Verify against original data
+        orig = rows[tid]
+        if (artist, album, title) == orig:
+            print("  ✅ Match")
+        else:
+            print(f"  ❌ Mismatch! Expected: {orig}")
+
+prototype_clustered_format(1000)
+

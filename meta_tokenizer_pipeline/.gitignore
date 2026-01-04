@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
 temp_train_corpus.txt
+*.bin
 
 # Persist release artifacts
 !release/
