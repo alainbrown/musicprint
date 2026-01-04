@@ -10,13 +10,13 @@
 To solve the "Brick Wall" problem of storing 100M tracks on a phone (which mathematically requires >4GB for raw text alone), we adopt a **Codebook-First Architecture**. We do not store raw data; we store sequences of integers that reference learned vocabularies.
 
 ### The Unified Storage Model
-The system is divided into three highly optimized layers that fit into **~1.2 GB Total**.
+The system is divided into three highly optimized layers. Based on empirical analysis of 45M tracks, we project a **~2.3 GB Total** footprint for 100M tracks.
 
-| Layer | Content | Technique | Size Est. |
+| Layer | Content | Technique | Size Est. (100M) |
 | :--- | :--- | :--- | :--- |
 | **1. Audio (Index)** | 100M Fingerprints | **Product Quantization (PQ)** | **~400 MB** |
-| **2. Structure** | Artist <-> Song Link | **Clustered Range Index** | **~200 MB** |
-| **3. Text (Metadata)** | Song Titles | **Domain-Specific BPE** | **~600 MB** |
+| **2. Structure** | Artist/Album Link | **Clustered Range Index** | **~100 MB** |
+| **3. Text (Metadata)** | Titles/Artists/Albums| **Domain-Specific BPE** | **~1.74 GB** |
 
 ---
 
@@ -27,7 +27,7 @@ The system is divided into three highly optimized layers that fit into **~1.2 GB
 #### A. The Backbone (Audio Understanding)
 *   **Model:** `m-a-p/MERT-v1-95M` (HuggingFace).
 *   **Execution:** Quantized to Float16 on Apple Neural Engine (ANE).
-*   **Output:** 768-dimensional embeddings.
+*   **Output:** 768-dimensional embeddings projected to a **65,535** semantic token space.
 
 #### B. The Audio Index (Search)
 *   **Technique:** **Product Quantization (PQ)**.
@@ -37,20 +37,31 @@ The system is divided into three highly optimized layers that fit into **~1.2 GB
 *   **Lookup:** Look up pre-computed distance tables for centroids (Asymmetric Distance Calculation).
 
 #### C. The Metadata Database (Text)
-We replace standard SQLite with a custom **Memory-Mapped Binary Blob**.
+We replace standard SQLite with a custom **Memory-Mapped Binary Blob** (`music_meta.bin`).
 
-1.  **Artist Layer (Structural Deduplication):**
-    *   **Insight:** "Taylor Swift" appears on 300 tracks.
-    *   **Method:** Sort the database by Artist. Store `ArtistID` only once per range.
-    *   **Structure:** `[Start_Song_ID, End_Song_ID] -> ArtistID`.
-    *   **Cost:** Effectively **0 bytes per song**.
+1.  **Artist/Album Layer (Structural Deduplication):**
+    *   **Method:** Physical clustering (sort by Artist ID then Album ID).
+    *   **Structure:** Dual-level Range Tables (`[Start_ID] -> Offset`).
+    *   **Benefit:** Removes redundant storage of Artist/Album names across 100M rows.
 
 2.  **Title Layer (BPE Tokenization):**
-    *   **Insight:** Titles are repetitive ("Symphony", "Remix", "feat.").
-    *   **Method:** Train a custom **Byte Pair Encoding (BPE)** tokenizer on 10M music titles.
-    *   **Vocabulary:** Static `vocab.json` (~500KB) shipped with the app.
-    *   **Storage:** Variable Length Integers (VarInts). Common words = 1 byte.
-    *   **Example:** "Bohemian Rhapsody" $\to$ `[4821, 931]` (3 bytes).
+    *   **Decision:** **65,535 Vocabulary** using 16-bit Fixed-Width integers (`uint16`).
+    *   **Truncation (UX-Optimized):** 
+        *   Artist: **15** tokens max.
+        *   Album: **20** tokens max.
+        *   Title: **25** tokens max.
+    *   **Encoding:** Standard HuggingFace Byte-Level BPE (Zero-loss for all scripts).
+
+---
+
+## 3. Current Benchmarks (Phase 1 Build)
+The following metrics were verified during the initialization of the MusicBrainz (45.4M records) database:
+
+*   **Total tracks indexed:** 53,650,719
+*   **Metadata DB size:** **934.06 MB**
+*   **Vocabulary size:** 689 KB (Binary)
+*   **Average bytes per track:** 18.26 bytes (Total Metadata)
+*   **Total App Footprint (Current):** **~1.26 GB** (Model + Index + 53M Meta)
 
 ---
 
