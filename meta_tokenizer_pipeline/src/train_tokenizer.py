@@ -18,7 +18,7 @@ def train_tokenizer(input_file, output_path, vocab_size=32000, columns=["song.ti
     """
     
     # 1. Prepare Data Source
-    temp_train_file = "temp_train_corpus.txt"
+    temp_train_file = "/tmp/tokenizer_train_corpus.txt"
     
     if use_db:
         print("Loading data from Database...")
@@ -93,7 +93,7 @@ def train_tokenizer(input_file, output_path, vocab_size=32000, columns=["song.ti
     trainer = trainers.BpeTrainer(
         vocab_size=vocab_size, 
         min_frequency=2, 
-        special_tokens=["<UNK>", "<PAD>"]
+        special_tokens=["[UNK]", "[PAD]", "[CLS]", "[SEP]", "[MASK]"]
     )
 
     # 4. Train
