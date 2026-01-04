@@ -7,3 +7,4 @@ temp_train_corpus.txt
 
 # Persist release artifacts
 !release/
+!release/*.bin

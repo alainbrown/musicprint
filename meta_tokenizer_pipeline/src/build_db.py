@@ -47,9 +47,10 @@ def build_db():
     conn = get_db_connection()
     cur = conn.cursor(name='build_db_cursor')
     
-    # IMPORTANT: We sort by Artist/Album to ensure CLUSTERING works.
+    # Pivot: Join with ISRC table and deduplicate by ISRC
+    # We use DISTINCT ON to pick the first occurrence (often the earliest or most relevant)
     query = """
-        SELECT 
+        SELECT DISTINCT ON (i.isrc)
             i.isrc,
             ac.id as artist_id,
             ac.name as artist_name,
@@ -63,7 +64,7 @@ def build_db():
         JOIN musicbrainz.release r ON m.release = r.id
         JOIN musicbrainz.artist_credit ac ON rec.artist_credit = ac.id
         WHERE i.isrc IS NOT NULL
-        ORDER BY ac.id, r.id, rec.id
+        ORDER BY i.isrc, r.id ASC
     """
     
     print("Streaming records from Postgres...")
@@ -122,8 +123,8 @@ def build_db():
             title_blob.extend(struct.pack(f"<{len(tokens)}H", *tokens))
             
             song_count += 1
-            if song_count % 1000000 == 0:
-                print(f"  Processed {song_count/1000000:.1f}M songs...")
+            if song_count % 100000 == 0:
+                print(f"  Processed {song_count/1000000:.2f}M songs... (Elapsed: {time.time()-start_time:.1f}s)")
 
     title_offsets.append(len(title_blob))
     
