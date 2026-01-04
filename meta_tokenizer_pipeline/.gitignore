@@ -1,0 +1,8 @@
+# Ignore temporary and build artifacts
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+temp_train_corpus.txt
+
+# Persist release artifacts
+!release/
