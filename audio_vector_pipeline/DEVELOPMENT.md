@@ -7,7 +7,7 @@ This guide outlines the workflow for training, evaluating, and exporting the Mus
 We use a GPU-Direct architecture (NVIDIA DALI + PyTorch Lightning).
 
 ```bash
-cd pipeline
+cd audio_vector_pipeline
 # Build and start the container
 docker compose up --build -d
 
@@ -30,7 +30,7 @@ python src/train.py \
     --auto_batch_size
 ```
 
-*   **Artifacts:** Checkpoints are saved to `pipeline/checkpoints/`.
+*   **Artifacts:** Checkpoints are saved to `audio_vector_pipeline/checkpoints/`.
 *   **Best Model:** The trainer automatically saves the top 3 models based on `val_loss`.
 
 ## 3. Evaluation (The Validation Phase)
@@ -56,7 +56,7 @@ Converts the PyTorch model to an Apple `.mlpackage` for the iPhone Neural Engine
 ```bash
 python src/export.py --checkpoint_path /app/checkpoints/best.ckpt
 ```
-*   **Output:** `pipeline/release/MusicPrintEncoder.mlpackage`
+*   **Output:** `audio_vector_pipeline/release/MusicPrintEncoder.mlpackage`
 *   **Sync:** This file is automatically symlinked to `ios_app/Models/` for Xcode.
 
 ### B. Build Full Index (Optional Server-Side)
