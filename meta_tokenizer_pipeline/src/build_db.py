@@ -10,7 +10,7 @@ DB_NAME = os.environ.get("DB_NAME", "musicbrainz_db")
 DB_USER = os.environ.get("DB_USER", "musicbrainz")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "musicbrainz")
 
-TOKENIZER_PATH = "models/music_vocab.json"
+TOKENIZER_PATH = "release/music_encoder.json"
 OUTPUT_PATH = "release/music_meta.bin"
 
 # UI-Driven Truncation Limits
@@ -34,26 +34,20 @@ def pack_isrc(isrc_str):
     except: return 0
 
 def get_db_connection():
-    return psycopg2.connect(
-        host=DB_HOST,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD
-    )
+    return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
 
 def build_db():
-    print(f">>> Building Clustered Binary Database (ISRC-First Architecture)..." )
+    print(">>> Building Unified Clustered Metadata + ISRC Index...")
     
     if not os.path.exists(TOKENIZER_PATH):
         print(f"Error: Tokenizer not found at {TOKENIZER_PATH}")
         return
-    
     tokenizer = Tokenizer.from_file(TOKENIZER_PATH)
     
     conn = get_db_connection()
     cur = conn.cursor(name='build_db_cursor')
     
-    # Pivot: Join with ISRC table and filter for NOT NULL
+    # IMPORTANT: We sort by Artist/Album to ensure CLUSTERING works.
     query = """
         SELECT 
             i.isrc,
@@ -69,44 +63,38 @@ def build_db():
         JOIN musicbrainz.release r ON m.release = r.id
         JOIN musicbrainz.artist_credit ac ON rec.artist_credit = ac.id
         WHERE i.isrc IS NOT NULL
-        ORDER BY i.isrc
+        ORDER BY ac.id, r.id, rec.id
     """
     
-    print("Executing ISRC-clustered query...")
+    print("Streaming records from Postgres...")
     cur.execute(query)
     
-    isrc_blob = bytearray()
+    isrc_id_pairs = [] # List of (packed_isrc, internal_id) 
     
     artist_ranges = []
     album_ranges = []
-    
     title_blob = bytearray()
     title_offsets = [] 
     
     artist_name_blob = bytearray()
-    artist_name_map = {} 
-    
+    artist_name_map = {}
     album_name_blob = bytearray()
-    album_name_map = {} 
+    album_name_map = {}
 
     last_artist_id = -1
     last_release_id = -1
-    
     song_count = 0
     start_time = time.time()
 
-    print(f"Streaming and Packing records...")
-    
     while True:
         rows = cur.fetchmany(50000)
-        if not rows:
-            break
+        if not rows: break
             
         for isrc, artist_id, artist_name, release_id, album_name, title in rows:
-            # 0. Store Bitpacked ISRC
-            isrc_blob.extend(struct.pack("<Q", pack_isrc(isrc)))
+            # 1. Map random ISRC to current sequential Internal ID
+            isrc_id_pairs.append((pack_isrc(isrc), song_count))
 
-            # 1. Handle Artist Clustering
+            # 2. Artist Clustering
             if artist_id != last_artist_id:
                 if artist_id not in artist_name_map:
                     tokens = tokenizer.encode(str(artist_name)).ids[:LIMIT_ARTIST]
@@ -114,11 +102,10 @@ def build_db():
                     artist_name_blob.extend(struct.pack("<B", len(tokens)))
                     artist_name_blob.extend(struct.pack(f"<{len(tokens)}H", *tokens))
                     artist_name_map[artist_id] = offset
-                
                 artist_ranges.append((song_count, artist_name_map[artist_id]))
                 last_artist_id = artist_id
             
-            # 2. Handle Album Clustering
+            # 3. Album Clustering
             if release_id != last_release_id:
                 if release_id not in album_name_map:
                     tokens = tokenizer.encode(str(album_name)).ids[:LIMIT_ALBUM]
@@ -126,32 +113,34 @@ def build_db():
                     album_name_blob.extend(struct.pack("<B", len(tokens)))
                     album_name_blob.extend(struct.pack(f"<{len(tokens)}H", *tokens))
                     album_name_map[release_id] = offset
-                
                 album_ranges.append((song_count, album_name_map[release_id]))
                 last_release_id = release_id
             
-            # 3. Handle Title
+            # 4. Title Storage
             tokens = tokenizer.encode(str(title)).ids[:LIMIT_TITLE]
             title_offsets.append(len(title_blob))
             title_blob.extend(struct.pack(f"<{len(tokens)}H", *tokens))
             
             song_count += 1
             if song_count % 1000000 == 0:
-                print(f"  Packed {song_count/1000000:.1f}M songs... (Elapsed: {time.time()-start_time:.1f}s)")
+                print(f"  Processed {song_count/1000000:.1f}M songs...")
 
     title_offsets.append(len(title_blob))
     
-    print(f"Finalizing file: {OUTPUT_PATH}")
+    # 5. SORT ISRC INDEX
+    # This is critical: The iOS app uses binary search on this section.
+    print("Sorting ISRC Index...")
+    isrc_id_pairs.sort()
     
-    # CALCULATE SECTION OFFSETS
+    # 6. Finalize Binary Layout
     header_size = 64
-    isrc_blob_size = len(isrc_blob)
+    isrc_index_size = len(isrc_id_pairs) * 12 # uint64 ISRC + uint32 ID
     artist_range_size = len(artist_ranges) * 8
     album_range_size = len(album_ranges) * 8
     title_offset_size = len(title_offsets) * 4
     
-    off_isrc_blob = header_size
-    off_artist_ranges = off_isrc_blob + isrc_blob_size
+    off_isrc_index = header_size
+    off_artist_ranges = off_isrc_index + isrc_index_size
     off_album_ranges = off_artist_ranges + artist_range_size
     off_title_offsets = off_album_ranges + album_range_size
     off_title_blob = off_title_offsets + title_offset_size
@@ -159,50 +148,25 @@ def build_db():
     off_album_blob = off_artist_blob + len(artist_name_blob)
     
     with open(OUTPUT_PATH, "wb") as f:
-        # 1. HEADER (64 bytes)
-        f.write(struct.pack("<4s", b"MPDB"))
-        f.write(struct.pack("<I", 2)) # Version 2: ISRC-First
-        f.write(struct.pack("<I", song_count))
-        f.write(struct.pack("<I", len(artist_ranges)))
-        f.write(struct.pack("<I", len(album_ranges)))
-        
-        f.write(struct.pack("<Q", off_isrc_blob))
-        f.write(struct.pack("<Q", off_artist_ranges))
-        f.write(struct.pack("<Q", off_album_ranges))
-        f.write(struct.pack("<Q", off_title_offsets))
-        f.write(struct.pack("<Q", off_title_blob))
-        f.write(struct.pack("<Q", off_artist_blob))
+        # Header (Version 3: Clustered + Sorted Index)
+        f.write(struct.pack("<4sIIII", b"MPDB", 3, song_count, len(artist_ranges), len(album_ranges)))
+        f.write(struct.pack("<QQQQQQ", off_isrc_index, off_artist_ranges, off_album_ranges, off_title_offsets, off_title_blob, off_artist_blob))
         f.write(struct.pack("<Q", off_album_blob))
-        
         f.write(b"\x00" * (header_size - f.tell()))
         
-        # 2. SECTIONS
-        f.write(isrc_blob)
-
-        for start_id, name_off in artist_ranges:
-            f.write(struct.pack("<II", start_id, name_off))
+        # Section 1: Sorted ISRC Index (12 bytes per track)
+        for packed_isrc, internal_id in isrc_id_pairs:
+            f.write(struct.pack("<QI", packed_isrc, internal_id))
             
-        for start_id, name_off in album_ranges:
-            f.write(struct.pack("<II", start_id, name_off))
-            
-        for off in title_offsets:
-            f.write(struct.pack("<I", off))
-            
+        # Section 2+: Clustered Metadata
+        for start_id, name_off in artist_ranges: f.write(struct.pack("<II", start_id, name_off))
+        for start_id, name_off in album_ranges: f.write(struct.pack("<II", start_id, name_off))
+        for off in title_offsets: f.write(struct.pack("<I", off))
         f.write(title_blob)
         f.write(artist_name_blob)
         f.write(album_name_blob)
 
-
-    cur.close()
-    conn.close()
-    
-    elapsed = time.time() - start_time
-    final_size = os.path.getsize(OUTPUT_PATH)
-    print(f"\nSUCCESS!")
-    print(f"Total Songs: {song_count:,}")
-    print(f"Final File Size: {final_size / 1024 / 1024:.2f} MB")
-    print(f"Average per song: {final_size / song_count:.2f} bytes")
-    print(f"Time taken: {elapsed:.1f}s")
+    print(f"\nSUCCESS! Created {OUTPUT_PATH} with {song_count:,} tracks in {time.time()-start_time:.1f}s.")
 
 if __name__ == "__main__":
     build_db()

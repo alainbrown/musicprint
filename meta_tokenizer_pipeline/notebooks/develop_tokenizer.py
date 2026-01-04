@@ -280,7 +280,7 @@ import struct
 
 def prototype_clustered_format(sample_size=1000):
     # 1. Load Production Tokenizer
-    tokenizer_path = "../release/music_vocab_final.json"
+    tokenizer_path = "../release/music_encoder.json"
     if not os.path.exists(tokenizer_path):
         print("Error: Production tokenizer not found. Run training first.")
         return

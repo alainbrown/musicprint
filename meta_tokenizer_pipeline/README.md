@@ -22,7 +22,7 @@ docker exec -it musicprint-tokenizer python src/import_mb.py
 Learn the vocabulary from the full unified corpus (Artist + Recording + Release):
 ```bash
 docker exec -it musicprint-tokenizer python src/train_tokenizer.py \
-  --output models/music_vocab.json \
+  --output release/music_encoder.json \
   --vocab_size 65535 \
   --use-db
 ```
@@ -36,14 +36,17 @@ docker exec -it musicprint-tokenizer python src/build_db.py
 ### 4. Export Artifacts
 Generate the optimized binary vocabulary lookup for the app:
 ```bash
-docker exec -it musicprint-tokenizer python src/export_vocab.py
+docker exec -it musicprint-tokenizer python src/export_vocab.py \
+  --input release/music_encoder.json \
+  --output release/music_decoder.bin
 ```
 
 ---
 
 ## 📊 Performance (Current Scale: 53.6M Tracks)
-*   **Metadata DB:** 934 MB (Binary).
-*   **Dictionary:** 689 KB (Binary).
+*   **Metadata DB:** 934 MB (`release/music_meta.bin`).
+*   **Encoder:** `release/music_encoder.json` (Full BPE model).
+*   **Decoder:** `release/music_decoder.bin` (Optimized binary lookup).
 *   **Compression:** ~18.2 bytes per track (Total Metadata).
 *   **iOS Access:** Zero-copy memory mapping (`mmap`).
 

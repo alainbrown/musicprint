@@ -56,8 +56,8 @@ def export_to_binary(json_path, bin_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export Tokenizer JSON to Production Binary")
-    parser.add_argument("--input", type=str, default="models/music_vocab.json", help="Input JSON path")
-    parser.add_argument("--output", type=str, default="release/music_vocab.bin", help="Output binary path")
+    parser.add_argument("--input", type=str, default="release/music_encoder.json", help="Input JSON path")
+    parser.add_argument("--output", type=str, default="release/music_decoder.bin", help="Output binary path")
     
     args = parser.parse_args()
     
