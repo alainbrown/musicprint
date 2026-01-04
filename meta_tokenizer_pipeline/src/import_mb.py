@@ -23,7 +23,9 @@ TARGET_TABLES = {
     "mbdump/artist_credit_name": "artist_credit_name",
     "mbdump/recording": "recording",
     "mbdump/release": "release",
-    "mbdump/track": "track"
+    "mbdump/track": "track",
+    "mbdump/medium": "medium",
+    "mbdump/release_group": "release_group"
 }
 
 def get_latest_url():

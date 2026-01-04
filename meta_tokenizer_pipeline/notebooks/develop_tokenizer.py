@@ -1,160 +1,166 @@
 # %% [markdown]
-# # Music Metadata Tokenizer Development (DB-Backed)
+# # System-Wide Tokenizer Optimizer
 # 
-# This notebook connects to the local MusicBrainz Postgres database to perform:
-# 1.  **Vocabulary Analysis:** Determine the optimal vocab size.
-# 2.  **Compression Tournament:** Compare Fixed-Width (uint16) vs VarInt strategies.
-# 3.  **Tokenizer Training:** Train the winner.
+# This notebook determines the mathematically optimal **Vocabulary Size** for the 100M track database.
+# It minimizes the total storage footprint:
+# 
+# **Total = Model Weights + Search Index + Metadata Database**
 
 # %%
 import os
 import psycopg2
 import pandas as pd
-from collections import Counter
+import numpy as np
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers, decoders
 
-# Config
+# Database Configuration
 DB_HOST = os.environ.get("DB_HOST", "mb_db")
 DB_NAME = os.environ.get("DB_NAME", "musicbrainz_db")
 DB_USER = os.environ.get("DB_USER", "musicbrainz")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "musicbrainz")
 
 def get_db_connection():
-    return psycopg2.connect(
-        host=DB_HOST,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD
-    )
+    return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
 
 # %% [markdown]
-# ## 1. Frequency Analysis
-# We stream text from the DB to understand the "Long Tail" of music vocabulary.
+# ## 1. Load Real-World Data Sample
+# We fetch (Artist, Album, Title) triplets to simulate the clustered storage architecture.
 
 # %% 
-def stream_word_counts(limit=None):
+def get_clustered_sample(sample_size=100000):
     conn = get_db_connection()
-    cur = conn.cursor(name='eda_cursor') # Server-side cursor
-    
-    query = """
-        SELECT name FROM musicbrainz.artist WHERE name IS NOT NULL
-        UNION ALL
-        SELECT name FROM musicbrainz.recording WHERE name IS NOT NULL
+    cur = conn.cursor()
+    # Join Recording -> Track -> Medium -> Release -> ArtistCredit
+    query = f"""
+        SELECT 
+            ac.name as artist_name,
+            r.name as album_name,
+            rec.name as song_title
+        FROM musicbrainz.recording rec
+        JOIN musicbrainz.track t ON t.recording = rec.id
+        JOIN musicbrainz.medium m ON t.medium = m.id
+        JOIN musicbrainz.release r ON m.release = r.id
+        JOIN musicbrainz.artist_credit ac ON rec.artist_credit = ac.id
+        LIMIT {sample_size}
     """
-    
-    print("Executing query...")
+    print(f"Fetching {sample_size} triplets from MusicBrainz...")
     cur.execute(query)
-    
-    word_counts = Counter()
-    processed = 0
-    
-    while True:
-        rows = cur.fetchmany(50000)
-        if not rows:
-            break
-            
-        for row in rows:
-            text = row[0]
-            # Simple pre-tokenization (whitespace)
-            words = text.split() 
-            word_counts.update(words)
-            
-        processed += len(rows)
-        if processed % 1000000 == 0:
-            print(f"Processed {processed/1000000:.1f}M rows...")
-            
-        if limit and processed >= limit:
-            break
-            
+    rows = cur.fetchall()
     cur.close()
     conn.close()
-    return word_counts
+    return pd.DataFrame(rows, columns=['artist', 'album', 'title'])
 
-# Run analysis on a subset (e.g., 1M rows) for interactivity.
-print("Starting Frequency Analysis (Sample 1M)...")
-counts = stream_word_counts(limit=1000000)
-print(f"Total Unique Words: {len(counts)}")
-print(f"Top 10 Words: {counts.most_common(10)}")
+df_sample = get_clustered_sample(100000)
+print(f"Sample loaded. Unique Artists: {df_sample['artist'].nunique()}, Unique Albums: {df_sample['album'].nunique()}")
 
 # %% [markdown]
-# ## 2. Coverage Analysis
-# How many words do we need to cover X% of the corpus?
-
-# %% 
-total_occurrences = sum(counts.values())
-sorted_counts = counts.most_common()
-
-cumulative = 0
-vocab_needed_90 = 0
-vocab_needed_95 = 0
-vocab_needed_99 = 0
-
-for rank, (word, count) in enumerate(sorted_counts):
-    cumulative += count
-    percent = cumulative / total_occurrences
-    
-    if percent >= 0.90 and vocab_needed_90 == 0:
-        vocab_needed_90 = rank + 1
-    if percent >= 0.95 and vocab_needed_95 == 0:
-        vocab_needed_95 = rank + 1
-    if percent >= 0.99 and vocab_needed_99 == 0:
-        vocab_needed_99 = rank + 1
-        break
-
-print(f"Vocab size for 90% coverage: {vocab_needed_90}")
-print(f"Vocab size for 95% coverage: {vocab_needed_95}")
-print(f"Vocab size for 99% coverage: {vocab_needed_99}")
-
-# %% [markdown]
-# ## 3. Compression Tournament
-# Comparing **Fixed uint16 (65k)** vs **VarInt (16k)**.
+# ## 2. The Cost Model
 # 
-# *   **Fixed:** Every token = 2 bytes. Vocab = 65,535.
-# *   **VarInt:** IDs < 128 = 1 byte. IDs > 127 = 2 bytes. Vocab = 16,383 (Limit for 2 bytes).
+# ### A. Model Weight Penalty
+# The final layer of the MERT model is a linear projection: `768 -> VocabSize`.
+# *   Size = `VocabSize * 768 * 2 bytes (Float16)`
+# 
+# ### B. Database Storage Strategy
+# We determine the byte-width based on the vocabulary size:
+# *   **V < 128:** 1 byte (7-bit)
+# *   **V < 16,384:** 2 bytes (14-bit VarInt)
+# *   **V < 65,536:** 2 bytes (16-bit Fixed)
+# *   **V > 65,536:** 3 bytes (21-bit VarInt)
 
 # %% 
-def simulate_size(vocab_size, use_varint, text_sample):
-    # Train a temp tokenizer with this config
+def get_token_byte_width(vocab_size):
+    if vocab_size < 128: return 1
+    if vocab_size < 16384: return 2
+    if vocab_size < 65536: return 2 # Fixed width 16-bit is more efficient than 3-byte VarInt
+    return 3
+
+def estimate_total_footprint(vocab_size, df):
+    # 1. Train Tokenizer
     tokenizer = Tokenizer(models.BPE())
     tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
     trainer = trainers.BpeTrainer(vocab_size=vocab_size, special_tokens=["<UNK>"])
     
-    # We need a file for training
-    with open("temp_sample.txt", "w") as f:
-        f.write("\n".join(text_sample))
-        
-    tokenizer.train(["temp_sample.txt"], trainer)
+    # Combined corpus for training
+    all_text = pd.concat([df['artist'], df['album'], df['title']]).astype(str).unique()
+    with open("temp_corpus.txt", "w") as f:
+        f.write("\n".join(all_text))
+    tokenizer.train(["temp_corpus.txt"], trainer)
     
-    total_bytes = 0
-    token_count = 0
+    # 2. Measure Average Bytes (Clustered Model)
+    byte_width = get_token_byte_width(vocab_size)
     
-    for text in text_sample:
-        ids = tokenizer.encode(text).ids
-        token_count += len(ids)
-        
-        if use_varint:
-            for i in ids:
-                if i < 128: total_bytes += 1
-                elif i < 16384: total_bytes += 2
-                else: total_bytes += 3 # Should not happen if vocab < 16k
-        else:
-            # Fixed uint16
-            total_bytes += len(ids) * 2
-            
-    return total_bytes, token_count
+    def get_set_size(series):
+        unique_vals = series.unique()
+        total_tokens = sum(len(tokenizer.encode(str(x)).ids) for x in unique_vals)
+        return total_tokens * byte_width, len(unique_vals)
 
-# Generate sample for simulation from the elements of our counter
-sample_texts = [x for x in list(counts.elements())[:50000]] 
+    artist_payload, num_unique_artists = get_set_size(df['artist'])
+    album_payload, num_unique_albums = get_set_size(df['album'])
+    
+    # Titles are stored for EVERY song (not deduplicated)
+    title_tokens = sum(len(tokenizer.encode(str(x)).ids) for x in df['title'])
+    title_payload = title_tokens * byte_width
+    
+    # 3. Project to 100 Million tracks
+    # We maintain the ratios found in the sample
+    artist_ratio = num_unique_artists / len(df)
+    album_ratio = num_unique_albums / len(df)
+    
+    proj_artist = (artist_payload / num_unique_artists) * (100_000_000 * artist_ratio)
+    proj_album = (album_payload / num_unique_albums) * (100_000_000 * album_ratio)
+    proj_title = (title_payload / len(df)) * 100_000_000
+    
+    db_size_mb = (proj_artist + proj_album + proj_title) / (1024 * 1024)
+    
+    # 4. Model Weight Size
+    # Base MERT (60MB) + Linear Head
+    model_size_mb = 60 + (vocab_size * 768 * 2) / (1024 * 1024)
+    
+    # 5. Index Size (Fixed PQ)
+    index_size_mb = 400 
+    
+    total_size_mb = db_size_mb + model_size_mb + index_size_mb
+    
+    return {
+        "vocab_size": vocab_size,
+        "db_mb": db_size_mb,
+        "model_mb": model_size_mb,
+        "total_mb": total_size_mb
+    }
 
-print("\n--- Running Tournament ---")
+# %% [markdown]
+# ## 3. Optimization Sweep
+# We run the simulation across the major bit-width breakpoints.
 
-# Scenario A: VarInt (Max 16k)
-size_a, count_a = simulate_size(16000, True, sample_texts)
-print(f"Scenario A (VarInt 16k): {size_a / 1024:.2f} KB")
+# %% 
+# Breakpoints and intermediate steps
+sweep_values = [2000, 8000, 16383, 32000, 65535, 100000, 150000]
+results = []
 
-# Scenario B: Fixed (Max 65k)
-size_b, count_b = simulate_size(60000, False, sample_texts)
-print(f"Scenario B (Fixed 60k):  {size_b / 1024:.2f} KB")
+print("Starting Optimization Sweep...")
+for v in sweep_values:
+    print(f"Testing Vocab Size: {v}...")
+    res = estimate_total_footprint(v, df_sample)
+    results.append(res)
 
-winner = "VarInt" if size_a < size_b else "Fixed"
-print(f"\nWINNER: {winner}")
+df_results = pd.DataFrame(results)
+
+# %% [markdown]
+# ## 4. The Recommendation
+# Finding the global minimum.
+
+# %% 
+winner = df_results.loc[df_results['total_mb'].idxmin()]
+
+print("\n" + "="*40)
+print("FINAL OPTIMIZATION REPORT (100M Tracks)")
+print("="*40)
+print(df_results.to_string(index=False))
+print("-" * 40)
+print(f"OPTIMAL VOCAB SIZE: {winner['vocab_size']:.0f}")
+print(f"TOTAL APP FOOTPRINT: {winner['total_mb']:.2f} MB")
+print("="*40)
+
+# Cleanup
+if os.path.exists("temp_corpus.txt"):
+    os.remove("temp_corpus.txt")

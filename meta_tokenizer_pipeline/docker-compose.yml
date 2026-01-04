@@ -20,12 +20,14 @@ services:
       - DB_NAME=musicbrainz_db
     stdin_open: true
     tty: true
+    shm_size: '1gb'
     depends_on:
       - mb_db
 
   mb_db:
     image: postgres:16-alpine
     container_name: musicprint-mb-db
+    shm_size: '1gb'
     environment:
       - POSTGRES_USER=musicbrainz
       - POSTGRES_PASSWORD=musicbrainz
