@@ -1,0 +1,18 @@
+services:
+  tokenizer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: musicprint-tokenizer:latest
+    container_name: musicprint-tokenizer
+    ports:
+      - "8889:8888" # Different port from audio pipeline (8888)
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./notebooks:/app/notebooks
+    environment:
+      - JUPYTER_TOKEN=musicprint
+    stdin_open: true
+    tty: true
+    # Command defined in Dockerfile
