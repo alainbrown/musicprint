@@ -10,7 +10,7 @@ MB_FTP_BASE = "http://ftp.musicbrainz.org/pub/musicbrainz/data/fullexport"
 TYPES_SQL_URL = "https://raw.githubusercontent.com/metabrainz/musicbrainz-server/master/admin/sql/CreateTypes.sql"
 TABLES_SQL_URL = "https://raw.githubusercontent.com/metabrainz/musicbrainz-server/master/admin/sql/CreateTables.sql"
 
-INPUT_FILE = "/app/data/mbdump.tar.bz2"
+INPUT_FILE = "/tmp/mbdump.tar.bz2"
 DB_HOST = os.environ.get("DB_HOST", "mb_db")
 DB_NAME = os.environ.get("DB_NAME", "musicbrainz_db")
 DB_USER = os.environ.get("DB_USER", "musicbrainz")

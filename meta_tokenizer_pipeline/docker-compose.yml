@@ -9,8 +9,8 @@ services:
       - "8889:8888" # Jupyter Lab
     volumes:
       - ./src:/app/src
-      - ./data:/app/data
       - ./notebooks:/app/notebooks
+      - ./release:/app/release
     environment:
       - JUPYTER_TOKEN=musicprint
       - DB_HOST=mb_db
