@@ -6,13 +6,34 @@ services:
     image: musicprint-tokenizer:latest
     container_name: musicprint-tokenizer
     ports:
-      - "8889:8888" # Different port from audio pipeline (8888)
+      - "8889:8888" # Jupyter Lab
     volumes:
       - ./src:/app/src
       - ./data:/app/data
       - ./notebooks:/app/notebooks
     environment:
       - JUPYTER_TOKEN=musicprint
+      - DB_HOST=mb_db
+      - DB_PORT=5432
+      - DB_USER=musicbrainz
+      - DB_PASSWORD=musicbrainz
+      - DB_NAME=musicbrainz_db
     stdin_open: true
     tty: true
-    # Command defined in Dockerfile
+    depends_on:
+      - mb_db
+
+  mb_db:
+    image: musicbrainz/musicbrainz-postgres:latest
+    container_name: musicprint-mb-db
+    environment:
+      - POSTGRES_USER=musicbrainz
+      - POSTGRES_PASSWORD=musicbrainz
+      - POSTGRES_DB=musicbrainz_db
+    volumes:
+      - mb_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  mb_pgdata:

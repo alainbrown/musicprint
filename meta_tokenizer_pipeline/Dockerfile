@@ -15,13 +15,16 @@ RUN apt-get update && apt-get install -y \
 # jupyterlab: For the notebook interface
 # ipywidgets: For progress bars
 # jupytext: To open .py files as notebooks
+# psycopg2-binary, sqlalchemy: For MusicBrainz Postgres connection
 RUN pip install --no-cache-dir \
     tokenizers \
     pandas \
     requests \
     jupyterlab \
     ipywidgets \
-    jupytext
+    jupytext \
+    psycopg2-binary \
+    sqlalchemy
 
 # Setup workspace
 COPY . /app
