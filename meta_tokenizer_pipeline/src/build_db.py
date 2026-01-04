@@ -10,7 +10,7 @@ DB_NAME = os.environ.get("DB_NAME", "musicbrainz_db")
 DB_USER = os.environ.get("DB_USER", "musicbrainz")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "musicbrainz")
 
-TOKENIZER_PATH = "release/music_vocab_final.json"
+TOKENIZER_PATH = "models/music_vocab.json"
 OUTPUT_PATH = "release/music_meta.bin"
 
 # UI-Driven Truncation Limits

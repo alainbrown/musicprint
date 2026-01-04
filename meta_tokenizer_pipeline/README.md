@@ -28,7 +28,7 @@ docker exec -it musicprint-tokenizer python src/import_mb.py
 Train the BPE model on the full unified corpus (Artist + Recording + Release):
 ```bash
 docker exec -it musicprint-tokenizer python src/train_tokenizer.py \
-  --output release/music_vocab_final.json \
+  --output models/music_vocab.json \
   --vocab_size 65535 \
   --use-db
 ```
@@ -36,7 +36,7 @@ docker exec -it musicprint-tokenizer python src/train_tokenizer.py \
 ### 4. Export for iOS
 Convert the JSON source of truth into the production-ready binary format:
 ```bash
-docker exec -it musicprint-tokenizer python src/export_vocab.py
+docker exec -it musicprint-tokenizer python src/export_vocab.py --input models/music_vocab.json
 ```
 
 ---
