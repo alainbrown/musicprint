@@ -82,9 +82,10 @@ def estimate_total_footprint(vocab_size, df):
     
     # Combined corpus for training
     all_text = pd.concat([df['artist'], df['album'], df['title']]).astype(str).unique()
-    with open("temp_corpus.txt", "w") as f:
+    temp_corpus = "/tmp/temp_corpus.txt"
+    with open(temp_corpus, "w") as f:
         f.write("\n".join(all_text))
-    tokenizer.train(["temp_corpus.txt"], trainer)
+    tokenizer.train([temp_corpus], trainer)
     
     # 2. Measure Average Bytes (Clustered Model)
     byte_width = get_token_byte_width(vocab_size)
@@ -162,5 +163,7 @@ print(f"TOTAL APP FOOTPRINT: {winner['total_mb']:.2f} MB")
 print("="*40)
 
 # Cleanup
-if os.path.exists("temp_corpus.txt"):
-    os.remove("temp_corpus.txt")
+
+if os.path.exists("/tmp/temp_corpus.txt"):
+
+    os.remove("/tmp/temp_corpus.txt")
