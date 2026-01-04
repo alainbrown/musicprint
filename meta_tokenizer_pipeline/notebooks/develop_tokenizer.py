@@ -1,176 +1,160 @@
 # %% [markdown]
-# # Music Metadata Tokenizer Development (Spotify Dataset)
+# # Music Metadata Tokenizer Development (DB-Backed)
 # 
-# This notebook develops the **BPE (Byte Pair Encoding)** tokenizer for the MusicPrint project.
-# 
-# **Goal:** Compress song titles, artists, and album names by ~60-80% to fit 100M songs on an iPhone.
-# **Dataset:** Spotify Tracks Dataset (114k entries) from Hugging Face.
-
-# %% [markdown]
-# ## 1. Setup & Data Ingestion
-# We use a real-world Spotify dataset containing track names, artists, and album names.
+# This notebook connects to the local MusicBrainz Postgres database to perform:
+# 1.  **Vocabulary Analysis:** Determine the optimal vocab size.
+# 2.  **Compression Tournament:** Compare Fixed-Width (uint16) vs VarInt strategies.
+# 3.  **Tokenizer Training:** Train the winner.
 
 # %%
 import os
-import requests
+import psycopg2
 import pandas as pd
-import numpy as np
+from collections import Counter
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers, decoders
 
-# Configuration
-DATA_URL = "https://huggingface.co/datasets/maharshipandya/spotify-tracks-dataset/resolve/main/dataset.csv"
-DATA_DIR = "../data"
-RAW_FILE = os.path.join(DATA_DIR, "spotify_dataset.csv")
-CORPUS_FILE = os.path.join(DATA_DIR, "unified_corpus.txt")
+# Config
+DB_HOST = os.environ.get("DB_HOST", "mb_db")
+DB_NAME = os.environ.get("DB_NAME", "musicbrainz_db")
+DB_USER = os.environ.get("DB_USER", "musicbrainz")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "musicbrainz")
 
-os.makedirs(DATA_DIR, exist_ok=True)
-
-# %% 
-# Download the dataset if not present
-if not os.path.exists(RAW_FILE):
-    print(f"Downloading {DATA_URL}...")
-    try:
-        # Use a user-agent to avoid potential blocks
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(DATA_URL, headers=headers, stream=True)
-        response.raise_for_status()
-        with open(RAW_FILE, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        print("Download complete.")
-    except Exception as e:
-        print(f"Failed to download: {e}")
-else:
-    print("Dataset already exists.")
-
-# %% 
-# Load and Inspect
-if os.path.exists(RAW_FILE):
-    # This dataset is ~20MB, easy for pandas
-    df = pd.read_csv(RAW_FILE)
-    print(f"Loaded {len(df)} tracks.")
-    
-    # Identify relevant columns
-    cols = ['track_name', 'artists', 'album_name']
-    print("\n--- DATA PREVIEW ---")
-    print(df[cols].head())
-else:
-    print("Error: Dataset file not found.")
-    df = pd.DataFrame()
-
-# %% [markdown]
-# ## 2. Data Preparation
-# We combine all text fields (Track, Artist, Album) into a single corpus for "Unified Tokenization".
-
-# %% 
-if not df.empty:
-    all_texts = []
-    for col in ['track_name', 'artists', 'album_name']:
-        print(f"Extracting {col}...")
-        all_texts.extend(df[col].dropna().astype(str).tolist())
-    
-    # Save to disk for the Rust-based trainer
-    with open(CORPUS_FILE, "w", encoding="utf-8") as f:
-        for line in all_texts:
-            f.write(line + "\n")
-            
-    print(f"\nExported {len(all_texts)} strings to {CORPUS_FILE}")
-    print(f"Sample: {all_texts[:5]}")
-
-# %% [markdown]
-# ## 3. Train Unified BPE Tokenizer
-# We learn a vocabulary of 32,000 "Music Tokens".
-
-# %% 
-if os.path.exists(CORPUS_FILE):
-    # Initialize a BPE Tokenizer
-    tokenizer = Tokenizer(models.BPE())
-    
-    # Pre-tokenizer: ByteLevel handles whitespaces and casing well
-    tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
-    tokenizer.decoder = decoders.ByteLevel()
-    
-    # Trainer
-    trainer = trainers.BpeTrainer(
-        vocab_size=32000, 
-        min_frequency=2, 
-        special_tokens=["<UNK>", "<PAD>"]
+def get_db_connection():
+    return psycopg2.connect(
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
     )
-    
-    # Train!
-    print("Training tokenizer (Rust backend)...")
-    tokenizer.train([CORPUS_FILE], trainer)
-    print("Training complete.")
-    
-    # Save the model
-    MODEL_PATH = os.path.join(DATA_DIR, "spotify_unified_tokenizer.json")
-    tokenizer.save(MODEL_PATH)
-    print(f"Tokenizer saved to {MODEL_PATH}")
-else:
-    print("Skipping training: No corpus file.")
 
 # %% [markdown]
-# ## 4. Analyze Compression
-# Measuring the efficiency gain of our unified vocabulary.
+# ## 1. Frequency Analysis
+# We stream text from the DB to understand the "Long Tail" of music vocabulary.
 
 # %% 
-def get_varint_size(token_id):
-    """Estimate size if using Variable Length Integers (0-127 = 1b, rest = 2b)"""
-    return 1 if token_id < 128 else 2
+def stream_word_counts(limit=None):
+    conn = get_db_connection()
+    cur = conn.cursor(name='eda_cursor') # Server-side cursor
+    
+    query = """
+        SELECT name FROM musicbrainz.artist WHERE name IS NOT NULL
+        UNION ALL
+        SELECT name FROM musicbrainz.recording WHERE name IS NOT NULL
+    """
+    
+    print("Executing query...")
+    cur.execute(query)
+    
+    word_counts = Counter()
+    processed = 0
+    
+    while True:
+        rows = cur.fetchmany(50000)
+        if not rows:
+            break
+            
+        for row in rows:
+            text = row[0]
+            # Simple pre-tokenization (whitespace)
+            words = text.split() 
+            word_counts.update(words)
+            
+        processed += len(rows)
+        if processed % 1000000 == 0:
+            print(f"Processed {processed/1000000:.1f}M rows...")
+            
+        if limit and processed >= limit:
+            break
+            
+    cur.close()
+    conn.close()
+    return word_counts
 
-def analyze_compression(text_list, tokenizer):
-    raw_bytes = 0
-    token_bytes = 0
+# Run analysis on a subset (e.g., 1M rows) for interactivity.
+print("Starting Frequency Analysis (Sample 1M)...")
+counts = stream_word_counts(limit=1000000)
+print(f"Total Unique Words: {len(counts)}")
+print(f"Top 10 Words: {counts.most_common(10)}")
+
+# %% [markdown]
+# ## 2. Coverage Analysis
+# How many words do we need to cover X% of the corpus?
+
+# %% 
+total_occurrences = sum(counts.values())
+sorted_counts = counts.most_common()
+
+cumulative = 0
+vocab_needed_90 = 0
+vocab_needed_95 = 0
+vocab_needed_99 = 0
+
+for rank, (word, count) in enumerate(sorted_counts):
+    cumulative += count
+    percent = cumulative / total_occurrences
+    
+    if percent >= 0.90 and vocab_needed_90 == 0:
+        vocab_needed_90 = rank + 1
+    if percent >= 0.95 and vocab_needed_95 == 0:
+        vocab_needed_95 = rank + 1
+    if percent >= 0.99 and vocab_needed_99 == 0:
+        vocab_needed_99 = rank + 1
+        break
+
+print(f"Vocab size for 90% coverage: {vocab_needed_90}")
+print(f"Vocab size for 95% coverage: {vocab_needed_95}")
+print(f"Vocab size for 99% coverage: {vocab_needed_99}")
+
+# %% [markdown]
+# ## 3. Compression Tournament
+# Comparing **Fixed uint16 (65k)** vs **VarInt (16k)**.
+# 
+# *   **Fixed:** Every token = 2 bytes. Vocab = 65,535.
+# *   **VarInt:** IDs < 128 = 1 byte. IDs > 127 = 2 bytes. Vocab = 16,383 (Limit for 2 bytes).
+
+# %% 
+def simulate_size(vocab_size, use_varint, text_sample):
+    # Train a temp tokenizer with this config
+    tokenizer = Tokenizer(models.BPE())
+    tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    trainer = trainers.BpeTrainer(vocab_size=vocab_size, special_tokens=["<UNK>"])
+    
+    # We need a file for training
+    with open("temp_sample.txt", "w") as f:
+        f.write("\n".join(text_sample))
+        
+    tokenizer.train(["temp_sample.txt"], trainer)
+    
+    total_bytes = 0
     token_count = 0
     
-    for text in text_list:
-        encoded = tokenizer.encode(text)
-        ids = encoded.ids
-        raw_bytes += len(text.encode('utf-8'))
-        for tid in ids:
-            token_bytes += get_varint_size(tid)
+    for text in text_sample:
+        ids = tokenizer.encode(text).ids
         token_count += len(ids)
         
-    return raw_bytes, token_bytes, token_count
+        if use_varint:
+            for i in ids:
+                if i < 128: total_bytes += 1
+                elif i < 16384: total_bytes += 2
+                else: total_bytes += 3 # Should not happen if vocab < 16k
+        else:
+            # Fixed uint16
+            total_bytes += len(ids) * 2
+            
+    return total_bytes, token_count
 
-if 'tokenizer' in locals() and not df.empty:
-    # Test on 1000 random songs from the dataset
-    test_samples = df.sample(1000)
-    test_texts = []
-    for _, row in test_samples.iterrows():
-        test_texts.extend([str(row['track_name']), str(row['artists']), str(row['album_name'])])
-        
-    raw_size, compressed_size, num_tokens = analyze_compression(test_texts, tokenizer)
-    
-    print(f"--- Compression Results (3000 field samples) ---")
-    print(f"Raw UTF-8 Size:       {raw_size / 1024:.2f} KB")
-    print(f"Tokenized Size:       {compressed_size / 1024:.2f} KB")
-    print(f"Compression Ratio:    {raw_size / compressed_size:.2f}x")
-    print(f"Space Saving:         {100 * (1 - compressed_size/raw_size):.2f}%")
-    print(f"Avg Tokens per Field: {num_tokens / len(test_texts):.2f}")
+# Generate sample for simulation from the elements of our counter
+sample_texts = [x for x in list(counts.elements())[:50000]] 
 
-# %% [markdown]
-# ## 5. Performance Stress Test
-# Inspecting how the tokenizer handles complex, commercial song titles.
+print("\n--- Running Tournament ---")
 
-# %% 
-def show_tokens(text):
-    if 'tokenizer' in locals():
-        encoded = tokenizer.encode(text)
-        print(f"'{text}'")
-        print(f"  Tokens: {encoded.tokens}")
-        print(f"  IDs:    {encoded.ids} (Bytes: {sum(get_varint_size(i) for i in encoded.ids)})")
-        print("-" * 30)
+# Scenario A: VarInt (Max 16k)
+size_a, count_a = simulate_size(16000, True, sample_texts)
+print(f"Scenario A (VarInt 16k): {size_a / 1024:.2f} KB")
 
-if 'tokenizer' in locals():
-    print("--- Edge Case Examples ---")
-    show_tokens("Can't Help Falling In Love")
-    show_tokens("Ghost - Acoustic")
-    show_tokens("Symphony No. 5 in C Minor, Op. 67: I. Allegro con brio")
-    show_tokens("Taylor Swift feat. Bon Iver")
-    show_tokens("Remastered 2022 (Live at Wembley)")
-    
-    # Inspect the vocabulary
-    vocab = tokenizer.get_vocab()
-    sorted_vocab = sorted(vocab.items(), key=lambda x: x[1])
-    print(f"\nTop 10 Tokens (learned music vocabulary): {sorted_vocab[:10]}")
+# Scenario B: Fixed (Max 65k)
+size_b, count_b = simulate_size(60000, False, sample_texts)
+print(f"Scenario B (Fixed 60k):  {size_b / 1024:.2f} KB")
+
+winner = "VarInt" if size_a < size_b else "Fixed"
+print(f"\nWINNER: {winner}")
