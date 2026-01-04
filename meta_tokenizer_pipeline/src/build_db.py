@@ -134,7 +134,7 @@ def build_db():
     isrc_id_pairs.sort()
     
     # 6. Finalize Binary Layout
-    header_size = 64
+    header_size = 128
     isrc_index_size = len(isrc_id_pairs) * 12 # uint64 ISRC + uint32 ID
     artist_range_size = len(artist_ranges) * 8
     album_range_size = len(album_ranges) * 8
@@ -151,9 +151,13 @@ def build_db():
     with open(OUTPUT_PATH, "wb") as f:
         # Header (Version 3: Clustered + Sorted Index)
         f.write(struct.pack("<4sIIII", b"MPDB", 3, song_count, len(artist_ranges), len(album_ranges)))
-        f.write(struct.pack("<QQQQQQ", off_isrc_index, off_artist_ranges, off_album_ranges, off_title_offsets, off_title_blob, off_artist_blob))
-        f.write(struct.pack("<Q", off_album_blob))
-        f.write(b"\x00" * (header_size - f.tell()))
+        f.write(struct.pack("<QQQQQQQ", 
+            off_isrc_index, off_artist_ranges, off_album_ranges, 
+            off_title_offsets, off_title_blob, off_artist_blob, off_album_blob))
+        
+        # Pad to header_size
+        current_pos = f.tell()
+        f.write(b"\x00" * (header_size - current_pos))
         
         # Section 1: Sorted ISRC Index (12 bytes per track)
         for packed_isrc, internal_id in isrc_id_pairs:
