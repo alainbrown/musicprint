@@ -43,6 +43,9 @@ def audio_pipeline(sample_rate, window_samples, file_root=None, file_list=None, 
         name="Reader"
     )
     
+    # Ensure label is 64-bit for bitpacked ISRCs
+    label = fn.cast(label, dtype=types.INT64)
+    
     # 2. Decode & Resample
     # We disable dynamic speed perturbation for stability in V1.
     audio, _ = fn.decoders.audio(

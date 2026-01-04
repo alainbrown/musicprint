@@ -25,7 +25,8 @@ TARGET_TABLES = {
     "mbdump/release": "release",
     "mbdump/track": "track",
     "mbdump/medium": "medium",
-    "mbdump/release_group": "release_group"
+    "mbdump/release_group": "release_group",
+    "mbdump/isrc": "isrc"
 }
 
 def get_latest_url():

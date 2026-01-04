@@ -56,8 +56,6 @@ class MusicPrintSystem(pl.LightningModule):
         
         data_dict = batch[0]
         audio_batch = data_dict["audio"] # (B, Time, 1)
-        # DALI labels might be file indices; we ideally need filenames for IDs.
-        # For now, we'll return the numeric label.
         labels = data_dict["label"]
         
         if audio_batch.dim() == 3:
@@ -65,60 +63,48 @@ class MusicPrintSystem(pl.LightningModule):
             
         results = []
         
-        # We process the batch song-by-song because adaptive indexing is variable-length output
-        # (Some songs have 3 hashes, some have 10)
         for i in range(audio_batch.shape[0]):
             audio = audio_batch[i] # (Time,)
             song_id = labels[i].item()
             
-            # --- Adaptive Indexing Logic ---
-            # 1. Sliding Window (on GPU)
-            # Create windows: 0-5s, 1-6s...
-            # Stride=24000 (1s), Window=120000 (5s)
-            
-            # Unfold creates sliding windows efficiently
-            # Input: (T,) -> (N_windows, Window_Size)
-            # step=24000, size=120000
             if audio.shape[0] < 120000:
                 continue
                 
             windows = audio.unfold(0, 120000, 24000) 
-            # Note: unfold might view same memory. MERT expects (Batch, Time).
             
-            # 2. Bulk Inference
-            # Get all hashes for the song at once
             with torch.no_grad():
-                # windows is (N, 120000)
-                # Ensure we don't blow up VRAM if song is super long (unlikely for 3-5min)
-                hashes = self.model.get_hash(windows) # (N, 64)
+                # Get continuous embeddings instead of binary hashes
+                embeddings = self.model(windows) # (N, 64)
                 
-            # 3. Greedy Deduplication (Sphere Method)
-            # Perform on CPU to avoid complex boolean masking on GPU
-            hashes_cpu = hashes.cpu()
-            timestamps = [j * 1.0 for j in range(len(hashes_cpu))] # 1.0s stride
+            # Greedy Deduplication (Sphere Method) on continuous vectors
+            # We use cosine similarity for deduplication
+            embeddings_cpu = embeddings.cpu()
+            # Normalize for cosine similarity
+            embeddings_norm = F.normalize(embeddings_cpu, p=2, dim=1)
             
-            selected_hashes = []
+            timestamps = [j * 1.0 for j in range(len(embeddings_norm))]
+            
+            selected_embeddings = []
             selected_times = []
             
-            for j, h in enumerate(hashes_cpu):
-                if not selected_hashes:
-                    selected_hashes.append(h)
+            for j, e in enumerate(embeddings_norm):
+                if not selected_embeddings:
+                    selected_embeddings.append(e)
                     selected_times.append(timestamps[j])
                     continue
                 
-                # Stack & Dist
-                stack = torch.stack(selected_hashes)
-                sim = torch.matmul(stack, h) / 64.0
-                dist = 0.5 * (1.0 - sim)
+                # Stack & Cosine Sim
+                stack = torch.stack(selected_embeddings)
+                sim = torch.matmul(stack, e) # both normalized
                 
-                if torch.min(dist) > 0.15: # Threshold
-                    selected_hashes.append(h)
+                if torch.max(sim) < 0.85: # Threshold for "different enough"
+                    selected_embeddings.append(e)
                     selected_times.append(timestamps[j])
-                    if len(selected_hashes) >= 10: break
+                    if len(selected_embeddings) >= 10: break
             
             results.append({
                 "id": song_id,
-                "hashes": torch.stack(selected_hashes),
+                "embeddings": torch.stack(selected_embeddings),
                 "times": selected_times
             })
             

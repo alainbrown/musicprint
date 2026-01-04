@@ -16,13 +16,14 @@
 # 2. **Train a 200,000-token Master Tokenizer** to explore the full potential of BPE merges.
 # 3. **Back-solve for the optimum:** We analyze the frequency of every merge and calculate the total system footprint for every possible vocab size from 1,000 to 200,000.
 
-# %% 
+# %%
 import os
 import psycopg2
 import pandas as pd
 import numpy as np
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers, decoders
 import time
+import struct
 
 # Config
 DB_HOST = os.environ.get("DB_HOST", "mb_db")
@@ -33,6 +34,40 @@ CORPUS_PATH = "/tmp/full_musicbrainz_corpus.txt"
 
 def get_db_connection():
     return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+
+# %% [markdown]
+# ## 0. ISRC Bitpacking Utility
+# We use a 50-bit packing scheme to fit 12-char ISRCs into a uint64.
+# This saves ~400MB at 100M scale compared to raw strings.
+
+# %%
+def pack_isrc(isrc_str):
+    if not isrc_str or len(isrc_str) != 12: return 0
+    isrc_str = isrc_str.upper()
+    try:
+        # Country: 10 bits
+        c1, c2 = ord(isrc_str[0]) - ord('A'), ord(isrc_str[1]) - ord('A')
+        country = (c1 * 26) + c2
+        # Registrant: 16 bits (Base 36)
+        def c2i(c):
+            if 'A' <= c <= 'Z': return ord(c) - ord('A')
+            if '0' <= c <= '9': return ord(c) - ord('0') + 26
+            return 0
+        reg = (c2i(isrc_str[2])*36*36) + (c2i(isrc_str[3])*36) + c2i(isrc_str[4])
+        # Year: 7 bits, Designation: 17 bits
+        year, desig = int(isrc_str[5:7]), int(isrc_str[7:12])
+        return (country << 40) | (reg << 24) | (year << 17) | desig
+    except: return 0
+
+def unpack_isrc(packed):
+    desig = packed & 0x1FFFF
+    year = (packed >> 17) & 0x7F
+    reg = (packed >> 24) & 0xFFFF
+    country = (packed >> 40) & 0x3FF
+    c1, c2 = chr((country // 26) + ord('A')), chr((country % 26) + ord('A'))
+    def i2c(i): return chr(i + ord('A')) if i < 26 else chr(i - 26 + ord('0'))
+    r1, r2, r3 = i2c(reg // 1296), i2c((reg // 36) % 36), i2c(reg % 36)
+    return f"{c1}{c2}{r1}{r2}{r3}{year:02d}{desig:05d}"
 
 # %% [markdown]
 # ## 1. Build Full Dataset Corpus
@@ -179,14 +214,17 @@ def find_optimum(frequencies, master_tokenizer):
         else:
             db_bytes = sum(frequencies[:16384]) * 2 + sum(frequencies[16384:v]) * 3 + (sum(frequencies[v:]) * 3 * 2)
 
+        # ISRC Overhead: 8 bytes in Meta DB + 8 bytes in Audio Index = 16 bytes per track
+        isrc_overhead_bytes = 16
+
         # Current Scale (Ground Truth)
-        current_db_mb = (db_bytes * current_scale) / (1024 * 1024)
-        current_index_mb = (400 * (current_count / 100_000_000)) # Scaled PQ index
+        current_db_mb = ((db_bytes + isrc_overhead_bytes) * current_scale) / (1024 * 1024)
+        current_index_mb = (400 * (current_count / 100_000_000)) # Scaled PQ index (Vectors only)
         model_mb = 60 + (v * 768 * 2) / (1024 * 1024)
         current_total_mb = current_db_mb + current_index_mb + model_mb
         
         # Target Scale (Projection)
-        target_db_mb = (db_bytes * target_scale) / (1024 * 1024)
+        target_db_mb = ((db_bytes + isrc_overhead_bytes) * target_scale) / (1024 * 1024)
         target_total_mb = target_db_mb + 400 + model_mb
         
         results.append({
@@ -253,14 +291,17 @@ def prototype_clustered_format(sample_size=1000):
     cur = conn.cursor()
     query = f"""
         SELECT 
+            i.isrc,
             ac.name as artist_name,
             r.name as album_name,
             rec.name as song_title
         FROM musicbrainz.recording rec
+        JOIN musicbrainz.isrc i ON i.recording = rec.id
         JOIN musicbrainz.track t ON t.recording = rec.id
         JOIN musicbrainz.medium m ON t.medium = m.id
         JOIN musicbrainz.release r ON m.release = r.id
         JOIN musicbrainz.artist_credit ac ON rec.artist_credit = ac.id
+        WHERE i.isrc IS NOT NULL
         ORDER BY ac.id, r.id
         LIMIT {sample_size}
     """
@@ -270,6 +311,7 @@ def prototype_clustered_format(sample_size=1000):
     conn.close()
 
     # 3. Build Range Tables and Token Blobs
+    isrc_to_id = {}    # Packed ISRC -> Sequential ID for prototype
     artist_ranges = [] # (start_id, artist_name)
     album_ranges = []  # (start_id, album_name)
     title_blob = b""
@@ -278,9 +320,12 @@ def prototype_clustered_format(sample_size=1000):
     last_artist = None
     last_album = None
 
-    print(f"Packing {len(rows)} songs...")
+    print(f"Packing {len(rows)} songs with ISRCs...")
 
-    for i, (artist, album, title) in enumerate(rows):
+    for i, (isrc, artist, album, title) in enumerate(rows):
+        packed_isrc = pack_isrc(isrc)
+        isrc_to_id[packed_isrc] = i
+
         # Artist Range
         if artist != last_artist:
             artist_ranges.append((i, artist))
@@ -305,8 +350,12 @@ def prototype_clustered_format(sample_size=1000):
     print(f"Title Blob Size: {len(title_blob)} bytes.")
 
     # 4. Verify Lookup Logic
-    def lookup(song_id):
-        # Find Artist (Binary search in real app, simple scan for prototype)
+    def lookup_by_isrc(target_isrc):
+        packed = pack_isrc(target_isrc)
+        if packed not in isrc_to_id: return None
+        song_id = isrc_to_id[packed]
+
+        # Find Artist
         artist_name = "Unknown"
         for start_id, name in reversed(artist_ranges):
             if song_id >= start_id:
@@ -324,25 +373,296 @@ def prototype_clustered_format(sample_size=1000):
         start_off = title_offsets[song_id]
         end_off = title_offsets[song_id + 1]
         raw_tokens = title_blob[start_off:end_off]
-        # Unpack uint16
         num_tokens = len(raw_tokens) // 2
         token_ids = struct.unpack(f"<{num_tokens}H", raw_tokens)
         title_decoded = tokenizer.decode(list(token_ids))
         
         return artist_name, album_name, title_decoded
 
-    # Test on a few IDs
-    test_ids = [0, 50, 100, len(rows)-1]
-    print("\n--- Lookup Verification ---")
-    for tid in test_ids:
-        artist, album, title = lookup(tid)
-        print(f"ID {tid:3}: {artist} | {album} | {title}")
-        # Verify against original data
-        orig = rows[tid]
-        if (artist, album, title) == orig:
+    # Test on a few samples
+    print("\n--- ISRC Lookup Verification ---")
+    for i in [0, len(rows)//2, len(rows)-1]:
+        sample_isrc = rows[i][0]
+        artist, album, title = lookup_by_isrc(sample_isrc)
+        print(f"ISRC {sample_isrc}: {artist} | {album} | {title}")
+        if (artist, album, title) == rows[i][1:]:
             print("  ✅ Match")
         else:
-            print(f"  ❌ Mismatch! Expected: {orig}")
+            print(f"  ❌ Mismatch!")
+
+# %% [markdown]
+# ## 7. ISRC Stress Tests & Architecture Validation
+# We analyze the MusicBrainz dataset to quantify the risks of the ISRC pivot.
+
+# %%
+def run_isrc_stress_tests():
+    conn = get_db_connection()
+    if not conn: return
+    cur = conn.cursor()
+    
+    print("--- 1. Sparsity & Multiplicity Analysis ---")
+    # This checks how many recordings have ISRCs and how many have multiple ISRCs
+    query = """
+        SELECT 
+            COUNT(DISTINCT rec.id) as total_recordings,
+            COUNT(DISTINCT i.recording) as recordings_with_isrc,
+            COUNT(i.isrc) as total_isrc_links
+        FROM musicbrainz.recording rec
+        LEFT JOIN musicbrainz.isrc i ON i.recording = rec.id
+    """
+    try:
+        cur.execute(query)
+        total_rec, rec_w_isrc, total_isrc = cur.fetchone()
+        
+        print(f"Total Recordings in DB: {total_rec:,}")
+        print(f"Recordings with ISRCs:  {rec_w_isrc:,} ({rec_w_isrc/total_rec*100:.1f}%)")
+        print(f"Total ISRC Strings:     {total_isrc:,}")
+        print(f"Avg ISRCs per Recording: {total_isrc/max(1, rec_w_isrc):.2f}")
+    except Exception as e:
+        print(f"Error in Sparsity check: {e}")
+
+    print("\n--- 2. Multi-ISRC Distribution ---")
+    query = """
+        SELECT c, COUNT(*) as num_recordings FROM (
+            SELECT COUNT(*) as c FROM musicbrainz.isrc GROUP BY recording
+        ) s GROUP BY c ORDER BY c
+    """
+    try:
+        cur.execute(query)
+        rows = cur.fetchall()
+        for count, num in rows:
+            print(f"  {count} ISRC(s): {num:,} recordings")
+    except Exception as e:
+         print(f"Error in Multiplicity check: {e}")
+
+    # 3. Budget Reality Check
+    print("\n--- 3. Storage Projection (100M Tracks @ 3.0GB) ---")
+    # If we use 8-byte Bitpacked ISRCs in both the Audio Index and Metadata DB:
+    num_tracks = 100_000_000
+    isrc_meta_size_mb = (num_tracks * 8) / (1024 * 1024)
+    isrc_audio_size_mb = (num_tracks * 8) / (1024 * 1024) # IDs in FAISS/PQ index
+    audio_vectors_mb = 400  # PQ Codebook + Codes
+    model_mb = 380
+    
+    total_fixed_mb = isrc_meta_size_mb + isrc_audio_size_mb + audio_vectors_mb + model_mb
+    
+    print(f"Fixed Overhead (Keys/Index/Model): {total_fixed_mb:.2f} MB")
+    print(f"Remaining for Metadata Strings:    {694.12:.2f} MB")
+    print(f"Bytes per track for Artist/Album/Title: {7.28:.2f} bytes")
+
+    cur.close()
+    conn.close()
+
+# %% [markdown]
+# ## 8. The "Storage Duel": Clustering vs. Random ISRC Sorting
+# We compare two architectural strategies to find the absolute smallest footprint.
+# 
+# **Option A:** Sort everything by ISRC. Fast lookup, but breaks Artist/Album clustering.
+# **Option B:** Sort by Artist/Album (Optimal Clustering). Use an 8-byte ISRC -> ID lookup table.
+
+# %%
+def perform_storage_duel(sample_size=100000):
+    print(f"Performing Storage Duel on {sample_size:,} tracks...")
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # 1. Fetch Sample Data
+    query = f"""
+        SELECT i.isrc, ac.name, r.name, rec.name
+        FROM musicbrainz.recording rec
+        JOIN musicbrainz.isrc i ON i.recording = rec.id
+        JOIN musicbrainz.track t ON t.recording = rec.id
+        JOIN musicbrainz.medium m ON t.medium = m.id
+        JOIN musicbrainz.release r ON m.release = r.id
+        JOIN musicbrainz.artist_credit ac ON rec.artist_credit = ac.id
+        LIMIT {sample_size}
+    """
+    cur.execute(query)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    if not rows:
+        print("No data found for duel. Ensure ISRCs are imported.")
+        return
+
+    # Use a dummy tokenizer estimate: Avg 3 tokens per name
+    # We want to measure REPETITION, not exact token counts.
+    
+    def estimate_size_a(data):
+        # OPTION A: Sorted by ISRC (Random Artist/Album order)
+        # We sort by ISRC string
+        sorted_data = sorted(data, key=lambda x: x[0])
+        total_tokens = 0
+        for isrc, artist, album, title in sorted_data:
+            # Every song carries its own Artist + Album + Title tokens
+            # (Rough estimate: 5 tokens artist, 5 tokens album, 5 tokens title)
+            total_tokens += 15 
+        return total_tokens * 2 # 2 bytes per token (uint16)
+
+    def estimate_size_b(data):
+        # OPTION B: Sorted by Artist/Album (Clustered)
+        sorted_data = sorted(data, key=lambda x: (x[1], x[2]))
+        
+        total_tokens = 0
+        last_artist = None
+        last_album = None
+        
+        for isrc, artist, album, title in sorted_data:
+            # 1. Artist (Stored once per cluster)
+            if artist != last_artist:
+                total_tokens += 5
+                last_artist = artist
+            
+            # 2. Album (Stored once per cluster)
+            if album != last_album:
+                total_tokens += 5
+                last_album = album
+                
+            # 3. Title (Stored for every song)
+            total_tokens += 5
+            
+        # Total = String Tokens + ISRC Index Overhead (8 bytes per track)
+        return (total_tokens * 2) + (len(data) * 8)
+
+    size_a = estimate_size_a(rows)
+    size_b = estimate_size_b(rows)
+    
+    # Projection to 100M
+    proj_a = (size_a / sample_size) * 100_000_000 / (1024 * 1024)
+    proj_b = (size_b / sample_size) * 100_000_000 / (1024 * 1024)
+
+    print(f"\nResults for 100M Tracks:")
+    print(f"--- Option A (Sorted by ISRC) ---")
+    print(f"  Projected Footprint: {proj_a:.2f} MB")
+    print(f"  Pros: Instant lookup.")
+    print(f"  Cons: No clustering; repetitive strings.")
+    
+    print(f"\n--- Option B (Clustered Metadata + ISRC Index) ---")
+    print(f"  Projected Footprint: {proj_b:.2f} MB")
+    print(f"  Pros: Highly compressed strings.")
+    print(f"  Cons: 800MB index overhead; two-step lookup.")
+    
+    winner = "Option B (Clustered)" if proj_b < proj_a else "Option A (ISRC-Sorted)"
+    print(f"\nWINNER: {winner} (Saves {abs(proj_a - proj_b):.2f} MB)")
+
+# %% [markdown]
+# ## 9. Unified Sectioned Binary Prototype (One-File Strategy)
+# This section implements the final production architecture:
+# - **Header (64b):** Pointers to all sections.
+# - **ISRC Index:** Sorted list of `(Bitpacked_ISRC, Internal_ID)` for binary search.
+# - **Metadata:** Clustered Artist/Album strings + Tokenized Titles.
+
+# %%
+def prototype_unified_build(sample_size=1000):
+    print(f"--- Prototyping Unified Binary for {sample_size} tracks ---")
+    
+    # 1. Fetch Sample Data
+    conn = get_db_connection()
+    cur = conn.cursor()
+    query = f"""
+        SELECT i.isrc, ac.name, r.name, rec.name
+        FROM musicbrainz.recording rec
+        JOIN musicbrainz.isrc i ON i.recording = rec.id
+        JOIN musicbrainz.track t ON t.recording = rec.id
+        JOIN musicbrainz.medium m ON t.medium = m.id
+        JOIN musicbrainz.release r ON m.release = r.id
+        JOIN musicbrainz.artist_credit ac ON rec.artist_credit = ac.id
+        WHERE i.isrc IS NOT NULL
+        ORDER BY ac.id, r.id -- We MUST sort by Artist first for clustering
+        LIMIT {sample_size}
+    """
+    cur.execute(query)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    # 2. Build Clustered Metadata & Index Links
+    # We use a temporary list to hold ISRC -> Clustered_ID mapping
+    isrc_links = []
+    
+    # Simple Mock Tokenizer
+    def mock_tokenize(s): return [ord(c) for c in str(s)[:10]]
+
+    artist_ranges = []
+    album_ranges = []
+    title_blob = b""
+    title_offsets = []
+    
+    last_artist = None
+    last_album = None
+    
+    for i, (isrc, artist, album, title) in enumerate(rows):
+        # Store link for the ISRC Index
+        isrc_links.append((pack_isrc(isrc), i))
+        
+        # Clustering Logic
+        if artist != last_artist:
+            artist_ranges.append((i, mock_tokenize(artist)))
+            last_artist = artist
+        if album != last_album:
+            album_ranges.append((i, mock_tokenize(album)))
+            last_album = album
+            
+        # Title tokens
+        tokens = mock_tokenize(title)
+        title_offsets.append(len(title_blob))
+        title_blob += struct.pack(f"<{len(tokens)}H", *tokens)
+    
+    title_offsets.append(len(title_blob))
+    
+    # 3. Sort ISRC Index for Binary Search
+    # This is the "Magic" that allows random ISRC lookup into clustered data
+    isrc_links.sort() 
+    
+    # 4. Pack Unified Binary
+    # [HEADER 64b] -> [ISRC INDEX] -> [ARTIST TABLE] -> [ALBUM TABLE] -> [TITLES]
+    
+    # Calculate offsets
+    off_isrc_index = 64
+    off_artist_table = off_isrc_index + (len(isrc_links) * 12) # uint64 + uint32
+    off_album_table = off_artist_table + (len(artist_ranges) * 8) # uint32 + uint32
+    off_title_offsets = off_album_table + (len(album_ranges) * 8)
+    off_title_blob = off_title_offsets + (len(title_offsets) * 4)
+    
+    # Final Verification Logic
+    print(f"Binary Layout:")
+    print(f"  ISRC Index:    {off_isrc_index} - {off_artist_table}")
+    print(f"  Artist Table:  {off_artist_table} - {off_album_table}")
+    print(f"  Title Blobs:   {off_title_blob} onwards")
+    
+    # --- Simulated iOS Lookup ---
+    def sim_ios_lookup(target_isrc):
+        packed_target = pack_isrc(target_isrc)
+        
+        # 1. Binary search in ISRC Index (Simplified for prototype)
+        internal_id = -1
+        for packed, uid in isrc_links:
+            if packed == packed_target:
+                internal_id = uid
+                break
+        
+        if internal_id == -1: return "Not Found"
+        
+        # 2. Get Metadata by ID
+        artist = "Unknown"
+        for start_id, tokens in reversed(artist_ranges):
+            if internal_id >= start_id:
+                artist = "".join([chr(t) for t in tokens])
+                break
+        
+        return f"Found ID {internal_id} | Artist: {artist}"
+
+    # Test
+    test_isrc = rows[0][0]
+    print(f"\nSearching for {test_isrc}...")
+    print(sim_ios_lookup(test_isrc))
+
+prototype_unified_build(100)
+
+
+
 
 prototype_clustered_format(1000)
 

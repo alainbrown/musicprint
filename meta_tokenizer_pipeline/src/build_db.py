@@ -18,6 +18,21 @@ LIMIT_ARTIST = 15
 LIMIT_ALBUM = 20
 LIMIT_TITLE = 25
 
+def pack_isrc(isrc_str):
+    if not isrc_str or len(isrc_str) != 12: return 0
+    isrc_str = isrc_str.upper()
+    try:
+        c1, c2 = ord(isrc_str[0]) - ord('A'), ord(isrc_str[1]) - ord('A')
+        country = (c1 * 26) + c2
+        def c2i(c):
+            if 'A' <= c <= 'Z': return ord(c) - ord('A')
+            if '0' <= c <= '9': return ord(c) - ord('0') + 26
+            return 0
+        reg = (c2i(isrc_str[2])*36*36) + (c2i(isrc_str[3])*36) + c2i(isrc_str[4])
+        year, desig = int(isrc_str[5:7]), int(isrc_str[7:12])
+        return (country << 40) | (reg << 24) | (year << 17) | desig
+    except: return 0
+
 def get_db_connection():
     return psycopg2.connect(
         host=DB_HOST,
@@ -27,7 +42,7 @@ def get_db_connection():
     )
 
 def build_db():
-    print(f">>> Building Clustered Binary Database (With UX Truncation)..." )
+    print(f">>> Building Clustered Binary Database (ISRC-First Architecture)..." )
     
     if not os.path.exists(TOKENIZER_PATH):
         print(f"Error: Tokenizer not found at {TOKENIZER_PATH}")
@@ -38,23 +53,29 @@ def build_db():
     conn = get_db_connection()
     cur = conn.cursor(name='build_db_cursor')
     
+    # Pivot: Join with ISRC table and filter for NOT NULL
     query = """
         SELECT 
+            i.isrc,
             ac.id as artist_id,
             ac.name as artist_name,
             r.id as release_id,
             r.name as album_name,
             rec.name as song_title
         FROM musicbrainz.recording rec
+        JOIN musicbrainz.isrc i ON i.recording = rec.id
         JOIN musicbrainz.track t ON t.recording = rec.id
         JOIN musicbrainz.medium m ON t.medium = m.id
         JOIN musicbrainz.release r ON m.release = r.id
         JOIN musicbrainz.artist_credit ac ON rec.artist_credit = ac.id
-        ORDER BY ac.id, r.id, rec.id
+        WHERE i.isrc IS NOT NULL
+        ORDER BY i.isrc
     """
     
-    print("Executing clustered query (this may take a minute)...")
+    print("Executing ISRC-clustered query...")
     cur.execute(query)
+    
+    isrc_blob = bytearray()
     
     artist_ranges = []
     album_ranges = []
@@ -74,21 +95,22 @@ def build_db():
     song_count = 0
     start_time = time.time()
 
-    print(f"Streaming and Packing records (Artist max: {LIMIT_ARTIST}, Album max: {LIMIT_ALBUM}, Title max: {LIMIT_TITLE})...")
+    print(f"Streaming and Packing records...")
     
     while True:
         rows = cur.fetchmany(50000)
         if not rows:
             break
             
-        for artist_id, artist_name, release_id, album_name, title in rows:
+        for isrc, artist_id, artist_name, release_id, album_name, title in rows:
+            # 0. Store Bitpacked ISRC
+            isrc_blob.extend(struct.pack("<Q", pack_isrc(isrc)))
+
             # 1. Handle Artist Clustering
             if artist_id != last_artist_id:
                 if artist_id not in artist_name_map:
-                    # Encode and truncate
                     tokens = tokenizer.encode(str(artist_name)).ids[:LIMIT_ARTIST]
                     offset = len(artist_name_blob)
-                    # Store as: [uint8 length, uint16 tokens...]
                     artist_name_blob.extend(struct.pack("<B", len(tokens)))
                     artist_name_blob.extend(struct.pack(f"<{len(tokens)}H", *tokens))
                     artist_name_map[artist_id] = offset
@@ -99,7 +121,6 @@ def build_db():
             # 2. Handle Album Clustering
             if release_id != last_release_id:
                 if release_id not in album_name_map:
-                    # Encode and truncate
                     tokens = tokenizer.encode(str(album_name)).ids[:LIMIT_ALBUM]
                     offset = len(album_name_blob)
                     album_name_blob.extend(struct.pack("<B", len(tokens)))
@@ -110,7 +131,6 @@ def build_db():
                 last_release_id = release_id
             
             # 3. Handle Title
-            # Encode and truncate
             tokens = tokenizer.encode(str(title)).ids[:LIMIT_TITLE]
             title_offsets.append(len(title_blob))
             title_blob.extend(struct.pack(f"<{len(tokens)}H", *tokens))
@@ -125,11 +145,13 @@ def build_db():
     
     # CALCULATE SECTION OFFSETS
     header_size = 64
+    isrc_blob_size = len(isrc_blob)
     artist_range_size = len(artist_ranges) * 8
     album_range_size = len(album_ranges) * 8
     title_offset_size = len(title_offsets) * 4
     
-    off_artist_ranges = header_size
+    off_isrc_blob = header_size
+    off_artist_ranges = off_isrc_blob + isrc_blob_size
     off_album_ranges = off_artist_ranges + artist_range_size
     off_title_offsets = off_album_ranges + album_range_size
     off_title_blob = off_title_offsets + title_offset_size
@@ -139,11 +161,12 @@ def build_db():
     with open(OUTPUT_PATH, "wb") as f:
         # 1. HEADER (64 bytes)
         f.write(struct.pack("<4s", b"MPDB"))
-        f.write(struct.pack("<I", 1))
+        f.write(struct.pack("<I", 2)) # Version 2: ISRC-First
         f.write(struct.pack("<I", song_count))
         f.write(struct.pack("<I", len(artist_ranges)))
         f.write(struct.pack("<I", len(album_ranges)))
         
+        f.write(struct.pack("<Q", off_isrc_blob))
         f.write(struct.pack("<Q", off_artist_ranges))
         f.write(struct.pack("<Q", off_album_ranges))
         f.write(struct.pack("<Q", off_title_offsets))
@@ -151,9 +174,11 @@ def build_db():
         f.write(struct.pack("<Q", off_artist_blob))
         f.write(struct.pack("<Q", off_album_blob))
         
-        f.write(b"\x00" * (64 - f.tell()))
+        f.write(b"\x00" * (header_size - f.tell()))
         
         # 2. SECTIONS
+        f.write(isrc_blob)
+
         for start_id, name_off in artist_ranges:
             f.write(struct.pack("<II", start_id, name_off))
             
@@ -166,6 +191,7 @@ def build_db():
         f.write(title_blob)
         f.write(artist_name_blob)
         f.write(album_name_blob)
+
 
     cur.close()
     conn.close()
