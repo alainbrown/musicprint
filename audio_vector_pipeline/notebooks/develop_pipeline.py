@@ -1,7 +1,10 @@
 # %% [markdown]
-# # MusicPrint Development Notebook
-# This notebook is for interactive debugging of the DALI pipeline and MERT model.
-# Run this in VS Code (Interactive Window) or convert to ipynb.
+# # MusicPrint Vetting Notebook
+# Use this to verify the logic of the Audio Pipeline before mass-indexing.
+# Logic Vetted:
+# 1. ISRC Bitpacking (50-bit)
+# 2. Sphere Method (Deduplication)
+# 3. PQ Quantization Accuracy
 
 # %%
 import sys
@@ -9,117 +12,84 @@ import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import librosa
-import librosa.display
+import struct
 
 # Add src to path
 sys.path.append(os.path.join(os.getcwd(), '../src'))
 
-from data.dali_loader import DALIGPULoader
+from isrc_utils import pack_isrc, unpack_isrc
 from models.mert_adapter import MERTAdapter
-
-# Configuration
-DATA_DIR = "../data/test_samples" # Relative to this notebook
-BATCH_SIZE = 2
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-print(f"Running on: {DEVICE}")
-print(f"Data Source: {DATA_DIR}")
+from system import MusicPrintSystem
 
 # %% [markdown]
-# ## 1. Initialize DALI Loader
-# We create a loader that mimics the training environment.
+# ## 1. Verify ISRC Bitpacking
+# Ensure we can round-trip ISRCs without data loss.
 
 # %%
-# We need absolute path for DALI usually, but let's try relative
-abs_data_dir = os.path.abspath(DATA_DIR)
-
-loader = DALIGPULoader(
-    batch_size=BATCH_SIZE,
-    file_root=abs_data_dir,
-    window_secs=5.0,
-    augment=True, # Turn on augmentations to visualize them
-    device_id=0 if torch.cuda.is_available() else None
-)
-
-print("Loader initialized.")
+test_isrcs = ["USRC11234567", "GBAYL1200001", "FR6V81234567"]
+for original in test_isrcs:
+    packed = pack_isrc(original)
+    unpacked = unpack_isrc(packed)
+    status = "PASS" if original == unpacked else "FAIL"
+    print(f"{original} -> {packed:016x} -> {unpacked} [{status}]")
 
 # %% [markdown]
-# ## 2. Visualize Augmented Audio
-# Fetch a batch and plot the waveforms to verify data integrity.
+# ## 2. Verify Sphere Method (Deduplication)
+# We test if the threshold correctly picks diverse embeddings.
 
 # %%
-# Get one batch
-iterator = iter(loader)
-batch = next(iterator)
+def test_sphere_method(embeddings, threshold=0.85):
+    selected = []
+    # Normalize for cosine similarity
+    normed = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+    
+    for i, e in enumerate(normed):
+        if not selected:
+            selected.append(e)
+            continue
+        
+        stack = torch.stack(selected)
+        sim = torch.matmul(stack, e)
+        if torch.max(sim) < threshold:
+            selected.append(e)
+            
+    return len(selected)
 
-# Extract data
-# DALI outputs [Batch, Time, 1]
-audio_gpu = batch[0]["audio"]
-labels = batch[0]["label"]
+# Simulate 100 similar vectors (walking through a song)
+mock_vectors = torch.randn(100, 64)
+for i in range(1, 100):
+    # Make each vector 95% similar to the previous one
+    mock_vectors[i] = mock_vectors[i-1] * 0.95 + mock_vectors[i] * 0.05
 
-# Move to CPU for plotting
-audio_cpu = audio_gpu.cpu().numpy().squeeze() # (Batch, Time)
-print(f"Batch Shape: {audio_cpu.shape}")
-print(f"Sample Rate (Target): 24000 Hz")
-
-# Plot
-plt.figure(figsize=(15, 6))
-for i in range(min(BATCH_SIZE, 2)):
-    plt.subplot(2, 1, i+1)
-    librosa.display.waveshow(audio_cpu[i], sr=24000)
-    plt.title(f"Sample {i} - Label: {labels[i].item()}")
-    plt.tight_layout()
-
-plt.show()
+count = test_sphere_method(mock_vectors, threshold=0.85)
+print(f"Sphere Method: Reduced 100 windows to {count} unique fingerprints.")
 
 # %% [markdown]
-# ## 3. Model Inference (MERT)
-# Load the heavy model and check the forward pass.
+# ## 3. Verify PQ Quantization
+# (Note: This requires a trained audio_pq.bin to be fully tested)
 
 # %%
-print("Loading MERT Adapter (this may take 10-20s)...")
-model = MERTAdapter().to(DEVICE)
-model.eval()
-print("Model loaded.")
+import faiss
 
-# %%
-# Run Inference
-# Input to MERT: (Batch, Time) tensor
-audio_tensor = audio_gpu.to(DEVICE).squeeze(-1) 
+def simulate_pq_compression():
+    d = 64
+    m = 8  # 8 bytes
+    nbits = 8
+    
+    # Create fake data
+    data = np.random.random((1000, d)).astype('float32')
+    
+    # Train PQ
+    pq = faiss.ProductQuantizer(d, m, nbits)
+    pq.train(data)
+    
+    # Compress and Decompress
+    codes = pq.compute_codes(data)
+    rev = pq.decode(codes)
+    
+    # Calculate MSE / Cosine Sim loss
+    mse = np.mean((data - rev)**2)
+    print(f"PQ Compression MSE: {mse:.6f}")
+    print(f"Code Shape: {codes.shape} (Example: {codes[0]})")
 
-with torch.no_grad():
-    # 1. Continuous Embeddings (Before Tanh/Sign)
-    embeddings = model(audio_tensor)
-    # 2. Binary Hashes
-    hashes = model.get_hash(audio_tensor)
-
-print(f"Embedding Shape: {embeddings.shape}")
-print(f"Hash Shape: {hashes.shape}")
-
-# %% [markdown]
-# ## 4. Fingerprint Analysis
-# Visualize the binary codes. If the image is solid color, the model has collapsed (bad init).
-# Ideally, you see a random-looking pattern (white/black barcode).
-
-# %%
-plt.figure(figsize=(10, 4))
-# Display as heatmap (0=Black, 1=White)
-# Map -1 -> 0, +1 -> 1
-binary_img = (hashes.cpu().numpy() > 0).astype(int)
-
-plt.imshow(binary_img, aspect='auto', cmap='gray', interpolation='nearest')
-plt.xlabel("Hash Bits (0-63)")
-plt.ylabel("Batch Sample Index")
-plt.title("Generated Fingerprints (Visual Check)")
-plt.yticks(range(BATCH_SIZE))
-plt.colorbar(label="Bit Value")
-plt.show()
-
-# Print Hex representation
-for i in range(min(BATCH_SIZE, 5)):
-    # Convert bits to hex string
-    bits = binary_img[i]
-    # Pack bits into integer
-    val = int("".join(str(b) for b in bits), 2)
-    print(f"Song {i} Hash: {val:016x}")
+simulate_pq_compression()

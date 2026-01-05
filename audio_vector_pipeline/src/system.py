@@ -1,16 +1,22 @@
 import pytorch_lightning as pl
 import torch
 import torch.optim as optim
+import torch.nn.functional as F
 from models.mert_adapter import MERTAdapter
 from models.loss import SupervisedContrastiveLoss
 
 class MusicPrintSystem(pl.LightningModule):
-    def __init__(self, lr=1e-4, output_dim=64):
+    def __init__(self, lr=1e-4, output_dim=64, pq_path=None):
         super().__init__()
         self.save_hyperparameters()
         
         self.model = MERTAdapter(output_dim=output_dim)
         self.criterion = SupervisedContrastiveLoss(temperature=0.07)
+        self.pq = None
+        
+        if pq_path and os.path.exists(pq_path):
+            import faiss
+            self.pq = faiss.read_ProductQuantizer(pq_path)
 
     def forward(self, x):
         return self.model(x)
@@ -76,18 +82,16 @@ class MusicPrintSystem(pl.LightningModule):
                 # Get continuous embeddings instead of binary hashes
                 embeddings = self.model(windows) # (N, 64)
                 
-            # Greedy Deduplication (Sphere Method) on continuous vectors
-            # We use cosine similarity for deduplication
-            embeddings_cpu = embeddings.cpu()
             # Normalize for cosine similarity
-            embeddings_norm = F.normalize(embeddings_cpu, p=2, dim=1)
+            embeddings_norm = F.normalize(embeddings, p=2, dim=1)
+            embeddings_cpu = embeddings_norm.cpu()
             
             timestamps = [j * 1.0 for j in range(len(embeddings_norm))]
             
             selected_embeddings = []
             selected_times = []
             
-            for j, e in enumerate(embeddings_norm):
+            for j, e in enumerate(embeddings_cpu):
                 if not selected_embeddings:
                     selected_embeddings.append(e)
                     selected_times.append(timestamps[j])
@@ -100,11 +104,18 @@ class MusicPrintSystem(pl.LightningModule):
                 if torch.max(sim) < 0.85: # Threshold for "different enough"
                     selected_embeddings.append(e)
                     selected_times.append(timestamps[j])
-                    if len(selected_embeddings) >= 10: break
+                    if len(selected_embeddings) >= 15: break
+            
+            final_embs = torch.stack(selected_embeddings).numpy()
+            
+            # Apply PQ quantization if available
+            if self.pq is not None:
+                # final_embs is (N, 64), pq.compute_codes returns (N, 8) uint8
+                final_embs = self.pq.compute_codes(final_embs.astype('float32'))
             
             results.append({
                 "id": song_id,
-                "embeddings": torch.stack(selected_embeddings),
+                "embeddings": final_embs,
                 "times": selected_times
             })
             

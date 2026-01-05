@@ -8,7 +8,9 @@ RUN pip install --no-cache-dir \
     ipywidgets \
     pytorch-lightning \
     coremltools \
-    wandb
+    wandb \
+    faiss-gpu \
+    scipy
 
 WORKDIR /app
 
