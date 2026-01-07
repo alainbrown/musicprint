@@ -1,6 +1,6 @@
 # Album Art Tokenizer Pipeline
 
-A dedicated pipeline for compressing millions of album covers into a tiny "Visual Vocabulary" using **VQ-VAE** (Vector Quantized Variational AutoEncoder).
+A dedicated pipeline for compressing millions of album covers into a tiny **Visual Codebook** using **VQ-VAE** (Vector Quantized Variational AutoEncoder).
 
 ## 🎯 Goal
 Fit **500,000+ Album Covers** (representing 5M+ songs) into **< 200 MB** of storage for mobile offline access.
@@ -46,3 +46,7 @@ Convert the Decoder to CoreML for on-device inference:
 ```bash
 python src/export_coreml.py
 ```
+
+## 📚 Citations
+*   **VQ-VAE:** Van den Oord, A., et al. (2017). *"Neural Discrete Representation Learning"*. [arXiv:1711.00937](https://arxiv.org/abs/1711.00937)
+*   **PyTorch:** Paszke, A., et al. (2019). *"PyTorch: An Imperative Style, High-Performance Deep Learning Library"*. [arXiv:1912.01703](https://arxiv.org/abs/1912.01703)

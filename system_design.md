@@ -6,8 +6,8 @@
 
 ---
 
-## 1. The Core Technique: "DeepSeek-Style" Compression
-To solve the "Brick Wall" problem of storing 100M tracks on a phone (which mathematically requires >4GB for raw text alone), we adopt a **Codebook-First Architecture**. We do not store raw data; we store sequences of integers that reference learned vocabularies.
+## 1. The Core Technique: Codebook-Based Compression
+To address the **Information Theoretic Limit** of storing 100M tracks on a mobile device (which exceeds 4GB for raw text alone), we adopt a **Codebook-First Architecture**. We do not store raw data; we store sequences of integers that reference learned domain-specific vocabularies.
 
 ### The Unified Storage Model
 The system is divided into three highly optimized layers. Based on empirical analysis of 45M tracks, we project a **~2.3 GB Total** footprint for 100M tracks.
@@ -167,4 +167,5 @@ Scaling from 1 to 100 million tracks will be done in phases.
 *   **MERT Model:** Li, Y., et al. (2024). *"MERT: Acoustic Music Understanding Model with Large-Scale Self-supervised Training"*. International Conference on Learning Representations (ICLR). [arXiv:2306.01075]
 *   **Product Quantization:** Jegou, H., et al. (2011). *"Product Quantization for Nearest Neighbor Search"*. IEEE Transactions on Pattern Analysis and Machine Intelligence (TPAMI).
 *   **Faiss:** Johnson, J., et al. (2019). *"Billion-scale similarity search with GPUs"*. IEEE Transactions on Big Data. [arXiv:1702.08734]
-*   **BPE:** Sennrich, R., et al. (2016). *"Neural Machine Translation of Rare Words with Subword Units"*.
+*   **BPE:** Sennrich, R., et al. (2016). *"Neural Machine Translation of Rare Words with Subword Units"*. [arXiv:1508.07909](https://arxiv.org/abs/1508.07909)
+*   **VQ-VAE:** Van den Oord, A., et al. (2017). *"Neural Discrete Representation Learning"*. Neural Information Processing Systems (NeurIPS). [arXiv:1711.00937](https://arxiv.org/abs/1711.00937)
