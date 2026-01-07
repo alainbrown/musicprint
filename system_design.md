@@ -17,12 +17,13 @@ The system is divided into three highly optimized layers. Based on empirical ana
 | **1. Audio (Index)** | 100M Fingerprints | **Product Quantization (PQ)** | **~400 MB** |
 | **2. Structure** | Artist/Album Link | **Clustered Range Index** | **~100 MB** |
 | **3. Text (Metadata)** | Titles/Artists/Albums| **Domain-Specific BPE** | **~1.74 GB** |
+| **4. Visual (Art)** | Album Covers | **VQ-VAE Tokenizer** | **~200 MB** |
 
 ---
 
 ## 2. Architecture Specs
 
-### Option A+: MERT + PQ + BPE (The "Offline 100M" Path)
+### Option A+: MERT + PQ + BPE + VQ-VAE (The "Full Experience" Path)
 
 #### A. The Backbone (Audio Understanding)
 *   **Model:** `m-a-p/MERT-v1-95M` (HuggingFace).
@@ -51,6 +52,14 @@ We replace standard SQLite with a custom **Memory-Mapped Binary Blob** (`music_m
         *   Album: **20** tokens max.
         *   Title: **25** tokens max.
     *   **Encoding:** Standard HuggingFace Byte-Level BPE (Zero-loss for all scripts).
+
+#### D. The Visual Layer (Album Art)
+*   **Goal:** Store ~500k unique album covers in < 200MB.
+*   **Technique:** **VQ-VAE (Vector Quantized VAE)**.
+    *   **Resolution:** 128x128 input -> 16x16 token grid.
+    *   **Vocabulary:** 1024 learned visual tokens (10-bit).
+*   **Storage:** 256 tokens * 10 bits = ~320 bytes per album.
+*   **UX Flow:** Decoded on-demand (Neural Inference) only for the "Match Found" screen.
 
 ---
 

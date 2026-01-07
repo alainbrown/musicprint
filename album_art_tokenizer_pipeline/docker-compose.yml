@@ -1,0 +1,15 @@
+services:
+  art-tokenizer:
+    build: .
+    container_name: musicprint-art-tokenizer
+    volumes:
+      - ./:/app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: 8g
+    command: tail -f /dev/null
