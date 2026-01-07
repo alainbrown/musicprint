@@ -19,6 +19,15 @@ The system is divided into three highly optimized layers. Based on empirical ana
 | **3. Text (Metadata)** | Titles/Artists/Albums| **Domain-Specific BPE** | **~1.74 GB** |
 | **4. Visual (Art)** | Album Covers | **VQ-VAE Tokenizer** | **~200 MB** |
 
+### Symmetrical Pipeline Architecture
+To maintain a unified deployment model, each data stream (Audio, Text, Visual) follows a symmetrical **Encoder-Database-Decoder** pattern. This ensures the mobile client uses a consistent `mmap`-based access pattern across all modules.
+
+| Data Stream | Encoder (Cloud/Training) | Database (Binary Artifact) | Decoder (On-Device) |
+| :--- | :--- | :--- | :--- |
+| **Audio** | MERT + PQ | `audio_index.bin` | Asymmetric Distance (ADC) |
+| **Text** | BPE Tokenizer | `music_meta.bin` | BPE Decoder (16-bit) |
+| **Visual** | VQ-VAE Encoder | `art.bin` | VQ-VAE Decoder (Neural) |
+
 ---
 
 ## 2. Architecture Specs
@@ -58,8 +67,10 @@ We replace standard SQLite with a custom **Memory-Mapped Binary Blob** (`music_m
 *   **Technique:** **VQ-VAE (Vector Quantized VAE)**.
     *   **Resolution:** 128x128 input -> 16x16 token grid.
     *   **Vocabulary:** 1024 learned visual tokens (10-bit).
-*   **Storage:** 256 tokens * 10 bits = ~320 bytes per album.
-*   **UX Flow:** Decoded on-demand (Neural Inference) only for the "Match Found" screen.
+*   **Storage (art.bin):** 
+    *   **Flat Array:** Indexed directly by `Album ID` for $O(1)$ access.
+    *   **Payload:** ~320 bytes per record.
+*   **UX Flow:** Decoded on-demand via the neural decoder only upon a successful match.
 
 ---
 
