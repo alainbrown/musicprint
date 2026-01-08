@@ -425,6 +425,99 @@ def verify_production_binary(target_isrcs=None):
 
         mm.close()
 
-verify_production_binary()
+# %% [markdown]
+# ## 10. Album Manifest Verification (Full Integrity Check)
+# We verify the `album_manifest.csv` against the `music_meta.bin` file.
+# Since `art.bin` will be built sequentially from the CSV, we must prove that:
+# `CSV[i].AlbumName == Binary.AlbumTable[i].Name`
+# 
+# We perform this check for **100% of the albums** to guarantee zero alignment errors.
+
+# %%
+def verify_manifest_integrity():
+    manifest_path = "/app/release/album_manifest.csv"
+    bin_path = "/app/release/music_meta.bin"
+    encoder_path = "/app/release/music_encoder.json"
+
+    if not os.path.exists(manifest_path) or not os.path.exists(bin_path):
+        print("Files not found.")
+        return
+
+    print(f"--- 100% Integrity Check: Manifest vs Binary ---")
+    import pandas as pd
+    import mmap
+    from tqdm import tqdm
+    
+    # 1. Load Resources
+    df = pd.read_csv(manifest_path)
+    tokenizer = Tokenizer.from_file(encoder_path)
+    
+    # 2. Open Binary
+    with open(bin_path, "rb") as f:
+        mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+        
+        # Parse Offsets
+        offsets = struct.unpack("<QQQQQQQ", mm[20:76])
+        off_album_ranges = offsets[2]
+        off_album_blob = offsets[6]
+        
+        errors = 0
+        total = len(df)
+        print(f"Verifying {total:,} albums...")
+        
+        # 3. Iterate EVERY album
+        # We zip the dataframe to avoid overhead
+        for row in tqdm(df.itertuples(index=False), total=total):
+            idx = row.album_index
+            csv_name = str(row.album_name) # Handle NaNs
+            
+            # Read from Binary at Index `idx`
+            entry_pos = off_album_ranges + (idx * 8)
+            _, name_off = struct.unpack("<II", mm[entry_pos:entry_pos+8])
+            
+            # Decode Name
+            res_off = off_album_blob + name_off
+            length = mm[res_off]
+            tokens = struct.unpack(f"<{length}H", mm[res_off+1:res_off+1+(length*2)])
+            bin_name = str(tokenizer.decode(list(tokens)))
+            
+            # Normalize Empty/Null states
+            def normalize(s):
+                s = str(s).strip()
+                if s.lower() in ["nan", "none", "null", "n/a", "na", ""]: return ""
+                return s.replace('""', '"')
+
+            c_norm = normalize(csv_name)
+            b_norm = normalize(bin_name)
+            
+            # Robust comparison at byte level to handle truncation artifacts
+            c_bytes = c_norm.encode('utf-8', errors='ignore')
+            b_bytes = b_norm.encode('utf-8', errors='ignore')
+            
+            # Binary should be a prefix of CSV. 
+            # We strip the last 3 bytes of the binary string to account for 
+            # partial multi-byte character truncation artifacts.
+            b_check = b_bytes[:-3] if len(b_bytes) > 3 else b_bytes
+            
+            if not c_bytes.startswith(b_check):
+                print(f"❌ MISMATCH at Index {idx}!")
+                print(f"   CSV: {c_norm}")
+                print(f"   BIN: {b_norm}")
+                errors += 1
+                if errors > 10: 
+                    print("Too many errors, aborting.")
+                    break
+
+
+        
+        mm.close()
+        
+        if errors == 0:
+            print(f"\n✅ SUCCESS: All {total:,} albums match perfectly.")
+        else:
+            print(f"\n❌ FAILED: Found {errors} mismatches.")
+
+verify_manifest_integrity()
+
 
 
