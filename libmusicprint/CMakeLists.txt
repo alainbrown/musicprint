@@ -15,6 +15,10 @@ add_library(musicprint_core STATIC ${SOURCES})
 # Tests (Optional, enabled if not on iOS)
 if(NOT IOS)
     enable_testing()
+    
     add_executable(test_art tests/test_art.cpp)
     target_link_libraries(test_art musicprint_core)
+
+    add_executable(test_meta tests/test_meta.cpp)
+    target_link_libraries(test_meta musicprint_core)
 endif()
