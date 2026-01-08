@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
+import pytorch_lightning as pl
 
 class VectorQuantizer(nn.Module):
     """
@@ -129,10 +131,13 @@ class Decoder(nn.Module):
         x = F.relu(x)
         return self._conv_trans_2(x)
 
-class VQVAE(nn.Module):
+class VQVAE(pl.LightningModule):
     def __init__(self, num_hiddens, num_residual_layers, num_residual_hiddens, 
-                 num_embeddings, embedding_dim, commitment_cost=0.25):
+                 num_embeddings, embedding_dim, commitment_cost=0.25, learning_rate=1e-3):
         super(VQVAE, self).__init__()
+        
+        # Save params for checkpoint restoration
+        self.save_hyperparameters()
         
         self._encoder = Encoder(3, num_hiddens,
                                 num_residual_layers, 
@@ -153,3 +158,16 @@ class VQVAE(nn.Module):
         loss, quantized, perplexity, _ = self._vq_vae(z)
         x_recon = self._decoder(quantized)
         return loss, x_recon, perplexity
+
+    def training_step(self, batch, batch_idx):
+        loss, data_recon, perplexity = self(batch)
+        recon_error = torch.mean((data_recon - batch)**2)
+        total_loss = recon_error + loss
+        
+        self.log('train_loss', total_loss, prog_bar=True)
+        self.log('recon_error', recon_error, prog_bar=True)
+        self.log('perplexity', perplexity, prog_bar=True)
+        return total_loss
+
+    def configure_optimizers(self):
+        return optim.Adam(self.parameters(), lr=self.hparams.learning_rate, amsgrad=False)

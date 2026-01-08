@@ -10,7 +10,8 @@ RUN pip install --no-cache-dir \
     coremltools \
     wandb \
     scipy \
-    matplotlib
+    matplotlib \
+    pytorch-lightning
 
 WORKDIR /app
 
