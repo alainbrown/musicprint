@@ -37,8 +37,9 @@ def export_to_binary(json_path, bin_path):
     
     print(f"Writing to {bin_path}...")
     with open(bin_path, 'wb') as f:
-        # 1. Header: Token Count (4 bytes)
-        f.write(struct.pack('<I', token_count))
+        # 1. Header: Magic(4s), Version(I), Token Count(I)
+        # Total: 12 bytes
+        f.write(struct.pack('<4sII', b'MPVC', 1, token_count))
         
         # 2. Offset Table: (token_count + 1) * 4 bytes
         # Using uint32 for offsets (supports up to 4GB data blob)

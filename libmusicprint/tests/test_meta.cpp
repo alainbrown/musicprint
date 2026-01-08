@@ -1,5 +1,6 @@
 
 #include "MetadataDatabase.h"
+#include "BPEDecoder.h"
 #include <iostream>
 #include <cassert>
 
@@ -7,23 +8,25 @@ int main() {
     std::cout << "Running MetadataDatabase Tests (against production binary)..." << std::endl;
 
     musicprint::MetadataDatabase db;
+    musicprint::BPEDecoder decoder;
+    
     const std::string meta_path = "../../meta_tokenizer_pipeline/release/music_meta.bin";
+    const std::string vocab_path = "../../meta_tokenizer_pipeline/release/music_decoder.bin";
 
     try {
         db.load(meta_path);
-        std::cout << "✅ Loaded " << db.getSongCount() << " songs." << std::endl;
+        decoder.load(vocab_path);
+        std::cout << "✅ Loaded DB (" << db.getSongCount() << " songs) and Vocab." << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "❌ FAILED to load: " << e.what() << std::endl;
-        std::cerr << "   Note: Ensure you have built the metadata binary first." << std::endl;
         return 1;
     }
 
     // List of test ISRCs (From MusicBrainz samples we saw earlier)
-    // USRC10301389 is usually a safe bet for testing
     std::vector<std::string> test_isrcs = {
-        "GBAYE0601498", // Random sample
-        "USRC10301389", // Common test case
-        "INVALIDISRCX"  // Negative test
+        "GBAYE0601498", // Should be "Smile" by Lily Allen? Let's see.
+        "USRC10301389", 
+        "INVALIDISRCX"  
     };
 
     for (const auto& isrc : test_isrcs) {
@@ -31,17 +34,19 @@ int main() {
         bool found = db.lookup(isrc, meta);
         
         if (found) {
-            std::cout << "✅ Found [" << isrc << "]: " 
-                      << "SongID=" << meta.song_id << ", "
-                      << "ArtistTokens=" << meta.artist_tokens.size() << ", "
-                      << "AlbumTokens=" << meta.album_tokens.size() << ", "
-                      << "TitleTokens=" << meta.title_tokens.size() << ", "
-                      << "AlbumIndex=" << meta.album_index << std::endl;
+            std::string artist = decoder.decode(meta.artist_tokens);
+            std::string title = decoder.decode(meta.title_tokens);
+            std::string album = decoder.decode(meta.album_tokens);
+            
+            std::cout << "✅ Found [" << isrc << "]:\n";
+            std::cout << "   Title:  " << title << "\n";
+            std::cout << "   Artist: " << artist << "\n";
+            std::cout << "   Album:  " << album << " (Index: " << meta.album_index << ")\n";
         } else {
             if (isrc == "INVALIDISRCX") {
                 std::cout << "✅ Correctly skipped invalid ISRC: " << isrc << std::endl;
             } else {
-                std::cout << "⚠️  ISRC not found (might not be in your 5M subset): " << isrc << std::endl;
+                std::cout << "⚠️  ISRC not found: " << isrc << std::endl;
             }
         }
     }
