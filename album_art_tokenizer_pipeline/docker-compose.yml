@@ -4,6 +4,8 @@ services:
     container_name: musicprint-art-tokenizer
     volumes:
       - ./:/app
+      - ./cache:/app/cache
+    # Enable GPU support if available (comment out if on CPU-only machine)
     deploy:
       resources:
         reservations:
