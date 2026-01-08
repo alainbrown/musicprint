@@ -27,9 +27,9 @@ sys.path.append(os.path.join(os.getcwd(), '../src'))
 from model import VQVAE
 
 # Configuration
-MANIFEST_PATH = "../data/album_manifest.csv"
-CACHE_DIR = "../data/test_covers"
-MODEL_PATH = "../release/visual_encoder.pth"
+MANIFEST_PATH = "data/album_manifest.csv"
+CACHE_DIR = "data/test_covers"
+MODEL_PATH = "release/visual_encoder.pth"
 
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
@@ -83,30 +83,25 @@ def verify_ingestion():
 test_samples = verify_ingestion()
 
 # %% [markdown]
-# ## 2. The Tokenizer: Compression Check
-# We load the VQ-VAE model. If no trained weights exist, we initialize random weights 
-# (which produces noise, but verifies the pipeline plumbing).
+# ## 2. The Tokenizer: Overfit Training Check
+# We initialize the VQ-VAE model and train it on our 5 downloaded samples.
+# This "Overfit Test" proves the model can actually learn and reconstruct images.
+# Instead of random noise, we expect to see clear reconstructions at the end.
 
-# %% 
+# %%
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Hyperparameters (Must match src/build_index.py)
+# Hyperparameters
 NUM_HIDDENS = 128
 NUM_RESIDUAL_LAYERS = 2
 NUM_RESIDUAL_HIDDENS = 32
 NUM_EMBEDDINGS = 1024
 EMBEDDING_DIM = 64
+COMMITMENT_COST = 0.25
+TEST_MODEL_PATH = "/tmp/overfit_encoder.pth"
 
 model = VQVAE(NUM_HIDDENS, NUM_RESIDUAL_LAYERS, NUM_RESIDUAL_HIDDENS,
-              NUM_EMBEDDINGS, EMBEDDING_DIM).to(device)
-
-if os.path.exists(MODEL_PATH):
-    print(f"Loading trained weights from {MODEL_PATH}")
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-else:
-    print("⚠️ No trained model found. Using RANDOM weights (output will be noise).")
-
-model.eval()
+              NUM_EMBEDDINGS, EMBEDDING_DIM, COMMITMENT_COST).to(device)
 
 # Transform pipeline
 transform = transforms.Compose([
@@ -115,13 +110,49 @@ transform = transforms.Compose([
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
 ])
 
+# Prepare Data for Training
+if test_samples:
+    print(f"--- 2. Overfit Training on {len(test_samples)} images ---")
+    
+    # Pre-load tensors
+    images = []
+    for _, path in test_samples:
+        img = Image.open(path).convert('RGB')
+        images.append(transform(img))
+    
+    batch = torch.stack(images).to(device)
+    
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    model.train()
+    
+    # Train for 100 steps (enough to memorize 5 images)
+    print("Training...", end="")
+    for i in range(100):
+        optimizer.zero_grad()
+        vq_loss, data_recon, perplexity = model(batch)
+        recon_error = torch.mean((data_recon - batch)**2)
+        loss = recon_error + vq_loss
+        loss.backward()
+        optimizer.step()
+        
+        if (i+1) % 20 == 0:
+            print(f" {i+1}...", end="")
+    
+    print(f"\nFinal Loss: {loss.item():.4f}")
+    
+    # Save to /tmp
+    torch.save(model.state_dict(), TEST_MODEL_PATH)
+    model.eval()
+else:
+    print("⚠️ No samples to train on.")
+
 # %% [markdown]
 # ## 3. Binary Packing (Simulation)
 # We take our downloaded images and pack them into a mini `art.bin`.
 # This tests the `build_index.py` logic: encoding -> uint16 -> flat binary.
 
-# %% 
-TEST_BIN = "../data/test_art.bin"
+# %%
+TEST_BIN = "/tmp/test_art.bin"
 
 def pack_mini_binary(samples):
     print(f"\n--- 3. Packing Binary ({TEST_BIN}) ---")
@@ -164,7 +195,6 @@ if test_samples:
     pack_mini_binary(test_samples)
 else:
     print("No samples to pack.")
-
 # %% [markdown]
 # ## 4. iOS Simulator (The Decoder)
 # This is the critical test. We act like the iPhone:
