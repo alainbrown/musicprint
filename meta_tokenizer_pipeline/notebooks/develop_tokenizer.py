@@ -282,12 +282,22 @@ def verify_production_binary(target_isrcs=None):
     # Use absolute paths for stability in docker exec
     bin_path = "/app/release/music_meta.bin"
     encoder_path = "/app/release/music_encoder.json"
+    manifest_path = "/app/release/album_manifest.csv"
     
     if not os.path.exists(bin_path):
         print(f"Error: Production binary not found at {bin_path}. Run build_db.py first.")
         return
 
     tokenizer = Tokenizer.from_file(encoder_path)
+    
+    # Load manifest for verification
+    manifest = {}
+    if os.path.exists(manifest_path):
+        import csv
+        with open(manifest_path, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                manifest[int(row['album_index'])] = row['release_uuid']
     
     with open(bin_path, "rb") as f:
         # Memory-map the entire file for instant access
@@ -303,7 +313,7 @@ def verify_production_binary(target_isrcs=None):
         off_title_offsets, off_title_blob, off_artist_blob, off_album_blob = offsets
 
         print(f"\n--- Production Binary Verified ---")
-        print(f"Magic: {magic.decode()} | Version: {version} | Songs: {song_count:,}")
+        print(f"Magic: {magic.decode()} | Version: {version} | Songs: {song_count:,} | Albums: {album_count:,}")
         
         # 2. Lookup Function (Binary Search on ISRC Index)
         def lookup(isrc_str):
@@ -347,7 +357,30 @@ def verify_production_binary(target_isrcs=None):
                 else:
                     high = mid - 1
 
-            # 4. Retrieve Title (Direct offset lookup)
+            # 4. Retrieve Album Name & Art UUID (Binary Search in Album Range Table)
+            album_name = "Unknown Album"
+            album_uuid = "N/A"
+            album_idx = -1
+            low = 0
+            high = album_count - 1
+            while low <= high:
+                mid = (low + high) // 2
+                entry_pos = off_album_ranges + (mid * 8)
+                start_id, name_off = struct.unpack("<II", mm[entry_pos:entry_pos+8])
+                if internal_id >= start_id:
+                    res_off = off_album_blob + name_off
+                    length = mm[res_off]
+                    tokens = struct.unpack(f"<{length}H", mm[res_off+1:res_off+1+(length*2)])
+                    album_name = tokenizer.decode(list(tokens))
+                    album_idx = mid
+                    low = mid + 1
+                else:
+                    high = mid - 1
+            
+            if album_idx != -1:
+                album_uuid = manifest.get(album_idx, "NOT IN MANIFEST")
+
+            # 5. Retrieve Title (Direct offset lookup)
             off_pos = off_title_offsets + (internal_id * 4)
             start_off, next_off = struct.unpack("<II", mm[off_pos:off_pos+8])
             
@@ -360,27 +393,35 @@ def verify_production_binary(target_isrcs=None):
                 "id": internal_id,
                 "isrc": isrc_str,
                 "artist": artist_name,
+                "album": album_name,
+                "album_idx": album_idx,
+                "album_uuid": album_uuid,
                 "title": title_name
             }
 
-        # 5. Test against actual data
+        # 6. Test against actual data
         if not target_isrcs:
             conn = get_db_connection()
             cur = conn.cursor()
-            cur.execute("SELECT isrc FROM musicbrainz.isrc LIMIT 5")
+            cur.execute("SELECT i.isrc FROM musicbrainz.isrc i JOIN musicbrainz.recording r ON i.recording = r.id LIMIT 5")
             target_isrcs = [r[0] for r in cur.fetchall()]
             cur.close()
             conn.close()
 
-        print("\nTesting Lookups:")
+        print("\nTesting Lookups (Metadata + Album Art Bridge):")
         for isrc in target_isrcs:
             start = time.time()
             res = lookup(isrc)
             elapsed = (time.time() - start) * 1000
             if res:
-                print(f"  {isrc} -> {res['artist']} - {res['title']} ({elapsed:.2f}ms)")
+                print(f"  ISRC: {isrc}")
+                print(f"  Song:   {res['title']}")
+                print(f"  Artist: {res['artist']}")
+                print(f"  Album:  {res['album']} (Idx: {res['album_idx']})")
+                print(f"  Art ID: {res['album_uuid']}")
+                print(f"  Time:   {elapsed:.2f}ms\n")
             else:
-                print(f"  {isrc} -> NOT FOUND")
+                print(f"  {isrc} -> NOT FOUND\n")
 
         mm.close()
 
