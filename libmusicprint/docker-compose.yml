@@ -1,0 +1,12 @@
+services:
+  core-test:
+    image: gcc:12
+    container_name: musicprint-core-test
+    volumes:
+      - ./:/app
+    working_dir: /app
+    # Install cmake then run the build and test
+    command: >
+      bash -c "apt-get update && apt-get install -y cmake && 
+               mkdir -p build && cd build && 
+               cmake .. && make && ./test_art"
