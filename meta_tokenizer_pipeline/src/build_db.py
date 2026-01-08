@@ -55,6 +55,7 @@ def build_db():
             ac.id as artist_id,
             ac.name as artist_name,
             r.id as release_id,
+            r.gid as release_gid,
             r.name as album_name,
             rec.name as song_title
         FROM musicbrainz.recording rec
@@ -81,6 +82,10 @@ def build_db():
     artist_name_map = {}
     album_name_blob = bytearray()
     album_name_map = {}
+    
+    # Manifest for Art Pipeline (Index -> UUID)
+    manifest_file = open("release/album_manifest.csv", "w")
+    manifest_file.write("album_index,release_uuid,album_name\n")
 
     last_artist_id = -1
     last_release_id = -1
@@ -91,7 +96,7 @@ def build_db():
         rows = cur.fetchmany(50000)
         if not rows: break
             
-        for isrc, artist_id, artist_name, release_id, album_name, title in rows:
+        for isrc, artist_id, artist_name, release_id, release_gid, album_name, title in rows:
             # 1. Map random ISRC to current sequential Internal ID
             isrc_id_pairs.append((pack_isrc(isrc), song_count))
 
@@ -114,6 +119,13 @@ def build_db():
                     album_name_blob.extend(struct.pack("<B", len(tokens)))
                     album_name_blob.extend(struct.pack(f"<{len(tokens)}H", *tokens))
                     album_name_map[release_id] = offset
+                    
+                    # Log to Manifest (Only once per album)
+                    # album_ranges index will be len(album_ranges)
+                    current_album_idx = len(album_ranges)
+                    clean_name = str(album_name).replace('"', '""') # Simple CSV escape
+                    manifest_file.write(f'{current_album_idx},"{release_gid}","{clean_name}"\n')
+
                 album_ranges.append((song_count, album_name_map[release_id]))
                 last_release_id = release_id
             
@@ -127,6 +139,7 @@ def build_db():
                 print(f"  Processed {song_count/1000000:.2f}M songs... (Elapsed: {time.time()-start_time:.1f}s)")
 
     title_offsets.append(len(title_blob))
+    manifest_file.close()
     
     # 5. SORT ISRC INDEX
     # This is critical: The iOS app uses binary search on this section.
