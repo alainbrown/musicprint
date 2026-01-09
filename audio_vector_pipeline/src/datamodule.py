@@ -26,8 +26,11 @@ class MusicDataModule(pl.LightningDataModule):
         self.val_files = self.all_files[split_idx:]
         
         # Write file lists with ISRCs as labels
-        self._write_file_list("train_list.txt", self.train_files)
-        self._write_file_list("val_list.txt", self.val_files)
+        self.train_list_path = os.path.join("/tmp", "train_list.txt")
+        self.val_list_path = os.path.join("/tmp", "val_list.txt")
+        
+        self._write_file_list(self.train_list_path, self.train_files)
+        self._write_file_list(self.val_list_path, self.val_files)
 
     def _write_file_list(self, name, files):
         with open(name, "w") as f:
@@ -50,7 +53,7 @@ class MusicDataModule(pl.LightningDataModule):
         num_shards = self.trainer.world_size if self.trainer else 1
 
         return DALIGPULoader(
-            file_list="train_list.txt", # Use the split list
+            file_list=self.train_list_path, # Use the split list
             batch_size=self.batch_size,
             device_id=device_id,
             shard_id=shard_id,
@@ -68,7 +71,7 @@ class MusicDataModule(pl.LightningDataModule):
             return None
 
         return DALIGPULoader(
-            file_list="val_list.txt",
+            file_list=self.val_list_path,
             batch_size=self.batch_size,
             device_id=device_id,
             shard_id=shard_id,
