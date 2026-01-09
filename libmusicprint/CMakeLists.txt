@@ -24,4 +24,7 @@ if(NOT IOS)
 
     add_executable(test_search tests/test_search.cpp)
     target_link_libraries(test_search musicprint_core)
+
+    add_executable(cli_search src/cli_search.cpp)
+    target_link_libraries(cli_search musicprint_core)
 endif()

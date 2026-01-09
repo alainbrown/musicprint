@@ -32,7 +32,7 @@ private:
     // PQ Parameters
     size_t M_ = 8;       // Number of sub-quantizers
     size_t K_ = 256;     // Number of centroids per sub-quantizer (8-bit)
-    size_t D_ = 768;     // Input dimension
+    size_t D_ = 64;      // Input dimension (Matches MERTAdapter output)
     size_t d_sub_ = 0;   // Dimension per sub-quantizer (D / M)
 
     // Pointers

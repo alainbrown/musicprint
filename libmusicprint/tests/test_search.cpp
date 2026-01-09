@@ -9,8 +9,8 @@
 // Constants matching production
 const int M = 8;
 const int K = 256;
-const int D = 768; 
-const int d_sub = D / M; // 96
+const int D = 64; 
+const int d_sub = D / M; // 8
 const int N = 1000; // 1000 vectors in database
 
 void create_synthetic_search_data() {
