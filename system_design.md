@@ -37,12 +37,12 @@ To maintain a unified deployment model, each data stream (Audio, Text, Visual) f
 #### A. The Backbone (Audio Understanding)
 *   **Model:** `m-a-p/MERT-v1-95M` (HuggingFace).
 *   **Execution:** Quantized to Float16 on Apple Neural Engine (ANE).
-*   **Output:** 768-dimensional embeddings projected to a **65,535** semantic token space.
+*   **Adapter:** Projects 768-dimensional MERT embeddings to a compact **64-dimensional** latent space.
 
 #### B. The Audio Index (Search)
 *   **Technique:** **Product Quantization (PQ)**.
-    *   Instead of raw vectors or binary hashes, we split the 768-dim vector into 8 sub-vectors.
-    *   Each sub-vector is mapped to a centroid ID (0-255).
+    *   The 64-dim embedding is split into **8 sub-vectors** (each of dimension 8).
+    *   Each sub-vector is quantised to a centroid ID (0-255).
 *   **Storage:** 8 bytes per song (8 x 1 byte indices).
 *   **Lookup:** Look up pre-computed distance tables for centroids (Asymmetric Distance Calculation).
 
@@ -118,6 +118,14 @@ To rigorously test the system without encoding 100M tracks immediately, we const
 | **End-to-End Latency** | `Audio Buffer` $\to$ `Song Title` (P99). | **< 150 ms** | > 300 ms. |
 | **Peak RAM (Cold)** | Memory spike during 1st query. | **< 350 MB** | > 1.2 GB. |
 
+### C. End-to-End Validation
+To ensure system integrity across the Python training pipeline and C++ runtime, we employ a containerized "Smoke Test" that:
+1.  **Generates** a micro-universe (1 track) from real audio.
+2.  **Trains** the MERT adapter and PQ codebook on this sample.
+3.  **Indexes** the audio using the generated artifacts.
+4.  **Searches** using the C++ CLI tool to verify the correct ISRC is retrieved.
+This ensures parity between the training (PyTorch) and inference (C++) environments.
+
 ---
 
 ## 4. Development & Scaling Strategy
@@ -148,7 +156,7 @@ Scaling from 1 to 100 million tracks will be done in phases.
 
 ### A. Development (Cloud/Vast.ai)
 *   **Language:** Python 3.10+
-*   **Audio/ML:** **PyTorch** + **Faiss** (for training PQ centroids).
+*   **Audio/ML:** **PyTorch Lightning** + **Faiss** (for training PQ centroids and VQ-VAE).
 *   **Tokenizer:** **HuggingFace Tokenizers** (Rust-based BPE).
 *   **Data Processing:** **NVIDIA DALI**.
 
