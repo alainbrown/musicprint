@@ -1,0 +1,31 @@
+services:
+  # 1. Generator Service (Python + PyTorch)
+  # Uses the audio pipeline image to generate real vector fixtures from audio
+  smoke-gen:
+    image: musicprint-pipeline:latest
+    volumes:
+      - ./:/workspace
+      - shared-fixtures:/fixtures
+    working_dir: /workspace
+    environment:
+      - FIXTURE_DIR=/fixtures
+    command: python3 tests/smoke_test_generator.py
+
+  # 2. Runner Service (C++ + GCC)
+  # Waits for generator, then runs the CLI search against the fixtures
+  smoke-run:
+    image: gcc:12
+    depends_on:
+      smoke-gen:
+        condition: service_completed_successfully
+    volumes:
+      - ./:/workspace
+      - shared-fixtures:/fixtures
+    working_dir: /workspace/libmusicprint
+    # We install cmake, build the CLI tool, and run it
+    command: >
+      bash -c "apt-get update && apt-get install -y cmake && mkdir -p build && cd build && cmake .. && make cli_search && ./cli_search /fixtures/query.bin /fixtures/index.bin /fixtures/centroids.bin /workspace/meta_tokenizer_pipeline/release/music_meta.bin /workspace/meta_tokenizer_pipeline/release/music_decoder.bin"
+
+volumes:
+  shared-fixtures:
+
