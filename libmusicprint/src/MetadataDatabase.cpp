@@ -45,6 +45,28 @@ void MetadataDatabase::load(const std::string& path) {
     off_album_blob_ = h.offsets[6];
 }
 
+std::string MetadataDatabase::unpackISRC(uint64_t packed) {
+    uint64_t desig = packed & 0x1FFFF;
+    uint64_t year = (packed >> 17) & 0x7F;
+    uint64_t reg = (packed >> 24) & 0xFFFF;
+    uint64_t country = (packed >> 40) & 0x3FF;
+
+    char c1 = static_cast<char>((country / 26) + 'A');
+    char c2 = static_cast<char>((country % 26) + 'A');
+
+    auto i2c = [](uint64_t i) -> char {
+        return (i < 26) ? static_cast<char>(i + 'A') : static_cast<char>(i - 26 + '0');
+    };
+
+    char r1 = i2c(reg / 1296);
+    char r2 = i2c((reg / 36) % 36);
+    char r3 = i2c(reg % 36);
+
+    char buf[13];
+    snprintf(buf, 13, "%c%c%c%c%c%02llu%05llu", c1, c2, r1, r2, r3, year, desig);
+    return std::string(buf);
+}
+
 uint64_t MetadataDatabase::packISRC(const std::string& isrc_str) const {
     if (isrc_str.length() != 12) return 0;
     

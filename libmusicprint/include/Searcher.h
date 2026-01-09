@@ -8,7 +8,7 @@
 namespace musicprint {
 
 struct SearchResult {
-    uint32_t song_id;
+    uint64_t song_id; // Packed ISRC
     float distance;
 };
 

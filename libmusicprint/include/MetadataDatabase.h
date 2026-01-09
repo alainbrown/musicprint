@@ -30,6 +30,9 @@ public:
     uint32_t getSongCount() const { return songCount_; }
     bool isLoaded() const { return metadataReader_.getSize() > 0; }
 
+    // Helper: Unpack uint64 to ISRC string (Static, useful for Searcher results)
+    static std::string unpackISRC(uint64_t packed);
+
 private:
     BinaryReader metadataReader_;
 

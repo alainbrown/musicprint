@@ -26,7 +26,7 @@ void create_synthetic_search_data() {
 
     // 2. Generate Index (N vectors)
     // Structure: [Header 64 bytes] [Entry 0] [Entry 1] ...
-    // Entry: [8 bytes Code] [4 bytes SongID]
+    // Entry: [8 bytes Code] [8 bytes ISRC]
     
     std::ofstream idx("test_index.bin", std::ios::binary);
     
@@ -52,11 +52,12 @@ void create_synthetic_search_data() {
             for (int m = 0; m < 8; ++m) code[m] = 0; // Matches Centroid 0
         }
         
-        // Write Code
+        // Write Code (8 bytes)
         idx.write(reinterpret_cast<const char*>(code), 8);
         
-        // Write SongID (We make ID = i for simplicity)
-        idx.write(reinterpret_cast<const char*>(&i), 4);
+        // Write ISRC (8 bytes) - Using index as dummy ISRC
+        uint64_t dummy_isrc = i;
+        idx.write(reinterpret_cast<const char*>(&dummy_isrc), 8);
     }
     
     idx.close();

@@ -16,10 +16,10 @@ void Searcher::load(const std::string& index_path, const std::string& pq_codeboo
 
     // 1. Setup Index Pointers
     // Format: [Header (64 bytes)][Entries]
-    // Entry: [8 bytes PQ Code][4 bytes SongID] = 12 bytes
+    // Entry: [8 bytes PQ Code][8 bytes Packed ISRC] = 16 bytes
     // We skip the header (64 bytes)
     size_t header_size = 64;
-    size_t entry_size = 12;
+    size_t entry_size = 16;
     
     if (indexReader_.getSize() < header_size) {
         num_vectors_ = 0;
@@ -59,40 +59,44 @@ std::vector<SearchResult> Searcher::search(const std::vector<float>& query, int 
 
     // 2. Scan Index (ADC)
     // Priority Queue to keep Top-K (Max-Heap)
+    // We store <Distance, IndexInFile> temporarily, then resolve ISRC later
     std::priority_queue<std::pair<float, uint32_t>> pq;
-    size_t entry_size = 12;
+    size_t entry_size = 16;
 
     for (uint32_t i = 0; i < num_vectors_; ++i) {
         float dist = 0.0f;
         const uint8_t* entry = codes_ + (i * entry_size);
-        const uint8_t* code = entry; // First 8 bytes are code
-
+        
         // Unrolled loop for M=8
-        dist += dist_table[0 * K_ + code[0]];
-        dist += dist_table[1 * K_ + code[1]];
-        dist += dist_table[2 * K_ + code[2]];
-        dist += dist_table[3 * K_ + code[3]];
-        dist += dist_table[4 * K_ + code[4]];
-        dist += dist_table[5 * K_ + code[5]];
-        dist += dist_table[6 * K_ + code[6]];
-        dist += dist_table[7 * K_ + code[7]];
+        dist += dist_table[0 * K_ + entry[0]];
+        dist += dist_table[1 * K_ + entry[1]];
+        dist += dist_table[2 * K_ + entry[2]];
+        dist += dist_table[3 * K_ + entry[3]];
+        dist += dist_table[4 * K_ + entry[4]];
+        dist += dist_table[5 * K_ + entry[5]];
+        dist += dist_table[6 * K_ + entry[6]];
+        dist += dist_table[7 * K_ + entry[7]];
 
         if (pq.size() < k) {
-            // Extract SongID (Last 4 bytes)
-            uint32_t song_id = *reinterpret_cast<const uint32_t*>(entry + 8);
-            pq.push({dist, song_id});
+            pq.push({dist, i});
         } else if (dist < pq.top().first) {
-            uint32_t song_id = *reinterpret_cast<const uint32_t*>(entry + 8);
             pq.pop();
-            pq.push({dist, song_id});
+            pq.push({dist, i});
         }
     }
 
-    // 3. Extract Results (Reverse order because PQ is Max-Heap)
+    // 3. Extract Results
     std::vector<SearchResult> results;
     results.reserve(pq.size());
     while (!pq.empty()) {
-        results.push_back({pq.top().second, pq.top().first});
+        uint32_t idx = pq.top().second;
+        float dist = pq.top().first;
+        
+        // Read ISRC from the entry (Offset 8)
+        const uint8_t* entry = codes_ + (idx * entry_size);
+        uint64_t packed_isrc = *reinterpret_cast<const uint64_t*>(entry + 8);
+        
+        results.push_back({packed_isrc, dist});
         pq.pop();
     }
     std::reverse(results.begin(), results.end());
