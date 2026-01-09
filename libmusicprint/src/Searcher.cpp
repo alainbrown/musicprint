@@ -15,14 +15,22 @@ void Searcher::load(const std::string& index_path, const std::string& pq_codeboo
     codebookReader_.open(pq_codebook_path);
 
     // 1. Setup Index Pointers
-    // Assuming audio_index.bin is just flat codes (no header for now, or handled externally)
-    // Actually, let's assume it's flat 8-byte codes for maximum simplicity.
-    codes_ = static_cast<const uint8_t*>(indexReader_.getPointer(0));
-    num_vectors_ = indexReader_.getSize() / M_; // 8 bytes per vector
+    // Format: [Header (64 bytes)][Entries]
+    // Entry: [8 bytes PQ Code][4 bytes SongID] = 12 bytes
+    // We skip the header (64 bytes)
+    size_t header_size = 64;
+    size_t entry_size = 12;
+    
+    if (indexReader_.getSize() < header_size) {
+        num_vectors_ = 0;
+        codes_ = nullptr;
+    } else {
+        codes_ = static_cast<const uint8_t*>(indexReader_.getPointer(header_size));
+        num_vectors_ = (indexReader_.getSize() - header_size) / entry_size;
+    }
 
     // 2. Setup Codebook Pointers
     // Codebook format: [M][K][d_sub] floats
-    // d_sub = D / M = 768 / 8 = 96
     d_sub_ = D_ / M_;
     centroids_ = static_cast<const float*>(codebookReader_.getPointer(0));
 }
@@ -31,8 +39,6 @@ std::vector<SearchResult> Searcher::search(const std::vector<float>& query, int 
     if (query.size() != D_) return {};
 
     // 1. Precompute Distance Table (M x K)
-    // Table[m][k] = L2_sq(query_sub[m], centroid[m][k])
-    // Size: 8 * 256 = 2048 floats (Small enough for L1 Cache)
     std::vector<float> dist_table(M_ * K_);
 
     for (size_t m = 0; m < M_; ++m) {
@@ -43,8 +49,6 @@ std::vector<SearchResult> Searcher::search(const std::vector<float>& query, int 
         for (size_t k_idx = 0; k_idx < K_; ++k_idx) {
             float dist = 0.0f;
             size_t centroid_offset = centroid_base + (k_idx * d_sub_);
-            
-            // Compute Euclidean Distance Squared
             for (size_t d = 0; d < d_sub_; ++d) {
                 float diff = query[query_offset + d] - centroids_[centroid_offset + d];
                 dist += diff * diff;
@@ -56,10 +60,12 @@ std::vector<SearchResult> Searcher::search(const std::vector<float>& query, int 
     // 2. Scan Index (ADC)
     // Priority Queue to keep Top-K (Max-Heap)
     std::priority_queue<std::pair<float, uint32_t>> pq;
+    size_t entry_size = 12;
 
     for (uint32_t i = 0; i < num_vectors_; ++i) {
         float dist = 0.0f;
-        const uint8_t* code = codes_ + (i * M_);
+        const uint8_t* entry = codes_ + (i * entry_size);
+        const uint8_t* code = entry; // First 8 bytes are code
 
         // Unrolled loop for M=8
         dist += dist_table[0 * K_ + code[0]];
@@ -72,10 +78,13 @@ std::vector<SearchResult> Searcher::search(const std::vector<float>& query, int 
         dist += dist_table[7 * K_ + code[7]];
 
         if (pq.size() < k) {
-            pq.push({dist, i});
+            // Extract SongID (Last 4 bytes)
+            uint32_t song_id = *reinterpret_cast<const uint32_t*>(entry + 8);
+            pq.push({dist, song_id});
         } else if (dist < pq.top().first) {
+            uint32_t song_id = *reinterpret_cast<const uint32_t*>(entry + 8);
             pq.pop();
-            pq.push({dist, i});
+            pq.push({dist, song_id});
         }
     }
 
