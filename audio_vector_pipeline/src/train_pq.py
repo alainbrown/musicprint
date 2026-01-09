@@ -52,11 +52,19 @@ def train_pq(args):
     faiss.write_ProductQuantizer(pq, args.output)
     print(f"SUCCESS! PQ Codebook saved to {args.output}")
 
+    if args.output_raw:
+        print(f">>> Exporting raw centroids to {args.output_raw}...")
+        # faiss.vector_to_array returns a flat numpy array
+        centroids = faiss.vector_to_array(pq.centroids)
+        with open(args.output_raw, "wb") as f:
+            f.write(centroids.astype(np.float32).tobytes())
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--data_dir", type=str, default="/app/data")
     parser.add_argument("--output", type=str, default="release/audio_pq.bin")
+    parser.add_argument("--output_raw", type=str, default=None, help="Path to export raw centroids binary")
     parser.add_argument("--num_samples", type=int, default=256000)
     parser.add_argument("--batch_size", type=int, default=128)
     args = parser.parse_args()

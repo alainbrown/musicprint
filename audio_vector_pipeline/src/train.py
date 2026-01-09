@@ -30,9 +30,9 @@ def main(args):
     # 4. Init Trainer
     trainer = pl.Trainer(
         logger=wandb_logger,
-        accelerator="gpu",
+        accelerator=args.accelerator,
         devices="auto", 
-        strategy="ddp_find_unused_parameters_true",
+        strategy=args.strategy,
         precision="bf16-mixed",
         max_epochs=args.epochs,
         callbacks=[checkpoint_callback, LearningRateMonitor(logging_interval='step')],
@@ -60,6 +60,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--auto_batch_size", action="store_true", help="Auto-tune batch size to fit VRAM")
+    parser.add_argument("--accelerator", type=str, default="auto")
+    parser.add_argument("--strategy", type=str, default="auto")
     
     args = parser.parse_args()
     main(args)

@@ -39,7 +39,7 @@ def pack_isrc(isrc_str):
     year, desig = int(isrc_str[5:7]), int(isrc_str[7:12])
     return (country << 40) | (reg << 24) | (year << 17) | desig
 
-def run_smoke_test():
+def run_smoke_test(args):
     print("🚀 Starting E2E Smoke Test (Real Audio -> Metadata)...")
 
     # 1. Generate Query Vector from Real Audio
@@ -48,13 +48,22 @@ def run_smoke_test():
     from models.mert_adapter import MERTAdapter
     import librosa
 
+    if args.checkpoint:
+        print(f"Loading model from {args.checkpoint}...")
+        from system import MusicPrintSystem
+        system = MusicPrintSystem.load_from_checkpoint(args.checkpoint, map_location="cpu")
+        model = system.model
+        model.eval()
+    else:
+        print("Using random MERTAdapter weights...")
+        model = MERTAdapter()
+
     audio_path = os.path.join(AUDIO_PIPE, "data/test_samples/sample1.wav")
     # librosa loads as (Time,), we need (Batch, Time)
     # sr=24000 to match MERT requirement
     audio, sr = librosa.load(audio_path, sr=24000)
     audio_tensor = torch.from_numpy(audio).unsqueeze(0) # (1, T)
     
-    model = MERTAdapter()
     with torch.no_grad():
         embeddings = model(audio_tensor) # (1, 768)
     
@@ -63,6 +72,10 @@ def run_smoke_test():
         f.write(vector.astype(np.float32).tobytes())
 
     # 2. Generate Index & Centroids
+    if args.skip_index and os.path.exists(INDEX_BIN) and os.path.exists(CENTROIDS_BIN):
+        print(f"✅ Using existing fixtures in {FIXTURE_DIR}")
+        return
+
     print("Step 2: Creating temporary index fixtures...")
     M, K, D = 8, 256, 64 # MERTAdapter outputs 64-dim vectors
     d_sub = D // M # 8
@@ -85,4 +98,9 @@ def run_smoke_test():
     print(f"✅ Fixtures generated at {FIXTURE_DIR}")
 
 if __name__ == "__main__":
-    run_smoke_test()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint", type=str, help="Path to trained model checkpoint")
+    parser.add_argument("--skip_index", action="store_true", help="Skip index generation if fixtures exist")
+    args = parser.parse_args()
+    run_smoke_test(args)

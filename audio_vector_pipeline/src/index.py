@@ -22,6 +22,11 @@ def main(args):
     # Load from checkpoint
     system = MusicPrintSystem.load_from_checkpoint(args.checkpoint_path)
     
+    if args.pq_path:
+        import faiss
+        print(f"Loading PQ from {args.pq_path}...")
+        system.pq = faiss.read_ProductQuantizer(args.pq_path)
+    
     # 3. Init Writer
     writer = IndexWriter(output_dir=args.output_dir, write_interval="batch")
     
@@ -43,6 +48,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint_path", type=str, required=True)
+    parser.add_argument("--pq_path", type=str, default=None, help="Path to trained PQ codebook (faiss file)")
     parser.add_argument("--data_dir", type=str, default="/app/data")
     parser.add_argument("--output_dir", type=str, default="/app/cache/index")
     parser.add_argument("--batch_size", type=int, default=16) # Smaller batch because we expand windows inside
