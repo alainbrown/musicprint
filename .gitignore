@@ -16,6 +16,12 @@ audio_vector_pipeline/data/
 **/release/*.csv
 **/release/*.json
 
+# Exceptions for Meta Pipeline Release
+!meta_tokenizer_pipeline/release/music_meta.bin
+!meta_tokenizer_pipeline/release/music_decoder.bin
+!meta_tokenizer_pipeline/release/music_encoder.json
+!meta_tokenizer_pipeline/release/album_manifest.csv
+
 # Python artifacts
 __pycache__/
 *.pyc

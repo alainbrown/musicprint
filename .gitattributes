@@ -1,1 +1,2 @@
 *.bin filter=lfs diff=lfs merge=lfs -text
+meta_tokenizer_pipeline/release/album_manifest.csv filter=lfs diff=lfs merge=lfs -text
