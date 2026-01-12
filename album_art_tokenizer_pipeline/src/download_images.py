@@ -1,37 +1,35 @@
-
 import os
 import time
 import requests
 import pandas as pd
-import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from io import BytesIO
 from PIL import Image
+import random
 
 # Configuration
-MANIFEST_PATH = "data/album_manifest.csv"
+# Mount path from docker-compose
+MANIFEST_PATH = "/vol/meta_release/album_manifest.csv"
 OUTPUT_DIR = "/vol/data"
-MAX_WORKERS = 24 # Conservative limit for CAA
-USER_AGENT = "MusicPrint-Indexer/0.1 ( alain.brown@gmail.com )"
-TIMEOUT = 10
+
+# POLITE SETTINGS
+MAX_WORKERS = 4      # Reduced from 24 to stay under IA rate limits
+DELAY_BETWEEN = 0.2  # Mandatory small sleep to prevent bursts
+USER_AGENT = "MusicPrint-Indexer/1.0 ( alain.brown@gmail.com )"
+TIMEOUT = 15
 
 def setup_directories(output_dir):
     if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
 
 def get_shard_path(uuid, output_dir):
-    """
-    Shards 850k files into 256*256 folders based on hash.
-    Actually, using the first 4 chars of the UUID is perfectly uniform for version 4 UUIDs.
-    """
-    if not uuid or len(uuid) < 4: return "misc"
+    if not uuid or len(uuid) < 4: return os.path.join(output_dir, "misc")
     folder = os.path.join(output_dir, uuid[:2], uuid[2:4])
     return folder
 
 def download_single(row, output_dir):
     uuid = row.release_uuid
-    idx = row.album_index
     
     # 1. Check if exists
     folder = get_shard_path(uuid, output_dir)
@@ -40,71 +38,75 @@ def download_single(row, output_dir):
     if os.path.exists(filename):
         return "SKIPPED"
 
-    # 2. Create folder if needed (race condition safe)
+    # 2. Create folder
     os.makedirs(folder, exist_ok=True)
     
-    # 3. Download
+    # 3. Download with Retries & Exponential Backoff
     url = f"https://coverartarchive.org/release/{uuid}/front-250"
     headers = {"User-Agent": USER_AGENT}
     
-    try:
-        r = requests.get(url, headers=headers, timeout=TIMEOUT)
-        
-        if r.status_code == 200:
-            # Verify it's a valid image before saving
-            try:
-                img = Image.open(BytesIO(r.content))
-                img.verify() # Fast check
-                
-                with open(filename, "wb") as f:
-                    f.write(r.content)
-                return "DOWNLOADED"
-            except:
-                return "INVALID"
-                
-        elif r.status_code == 404:
-            return "MISSING"
-        elif r.status_code in [429, 503]:
-            time.sleep(2) # Backoff
-            return "RATELIMIT"
-        else:
-            return f"ERROR_{r.status_code}"
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Polite Delay
+            time.sleep(DELAY_BETWEEN + random.uniform(0, 0.1))
             
-    except Exception as e:
-        return f"EXCEPTION"
+            r = requests.get(url, headers=headers, timeout=TIMEOUT)
+            
+            if r.status_code == 200:
+                try:
+                    img = Image.open(BytesIO(r.content))
+                    img.verify()
+                    with open(filename, "wb") as f:
+                        f.write(r.content)
+                    return "DOWNLOADED"
+                except:
+                    return "INVALID"
+                    
+            elif r.status_code == 404:
+                return "MISSING"
+            
+            elif r.status_code in [429, 503]:
+                # Exponential backoff
+                wait = (2 ** attempt) * 5 + random.uniform(0, 2)
+                time.sleep(wait)
+                continue # Retry
+                
+            else:
+                return f"ERROR_{r.status_code}"
+                
+        except Exception as e:
+            time.sleep(2)
+            continue
+            
+    return "FAILED"
 
-def main(manifest_path=MANIFEST_PATH, output_dir=OUTPUT_DIR):
-    print(">>> Album Art Downloader Starting...")
-    setup_directories(output_dir)
+def main():
+    print(">>> Polite Album Art Downloader Starting...")
+    setup_directories(OUTPUT_DIR)
     
-    if not os.path.exists(manifest_path):
-        print(f"Manifest not found at {manifest_path}")
+    if not os.path.exists(MANIFEST_PATH):
+        print(f"Manifest not found at {MANIFEST_PATH}")
         return
 
-    df = pd.read_csv(manifest_path)
+    df = pd.read_csv(MANIFEST_PATH)
     total = len(df)
     print(f"Loaded {total:,} albums to process.")
     
     stats = {
-        "DOWNLOADED": 0,
-        "SKIPPED": 0,
-        "MISSING": 0,
-        "INVALID": 0,
-        "RATELIMIT": 0,
-        "ERROR": 0
+        "DOWNLOADED": 0, "SKIPPED": 0, "MISSING": 0,
+        "INVALID": 0, "RATELIMIT": 0, "ERROR": 0, "FAILED": 0
     }
     
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # Submit all tasks
-        futures = {executor.submit(download_single, row, output_dir): row for row in df.itertuples()}
+        futures = {executor.submit(download_single, row, OUTPUT_DIR): row for row in df.itertuples()}
         
-        # Process as they complete
         with tqdm(total=total, unit="img") as pbar:
             for future in as_completed(futures):
                 res = future.result()
                 
                 # Update Stats
-                key = res if "ERROR" not in res and "EXCEPTION" not in res else "ERROR"
+                key = res if "ERROR" not in res else "ERROR"
                 if key not in stats: stats[key] = 0
                 stats[key] += 1
                 
