@@ -7,7 +7,7 @@ node_modules/
 Thumbs.db
 
 # Pipeline Data & Caches (Global)
-**/data/
+audio_vector_pipeline/data/
 **/cache/
 **/checkpoints/
 

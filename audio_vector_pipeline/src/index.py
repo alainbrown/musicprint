@@ -45,13 +45,21 @@ def main(args):
     trainer.predict(system, datamodule=dm)
     print("Indexing Complete.")
 
+def index(args):
+    """
+    Main indexing entry point.
+    args: Namespace or object with attributes:
+        checkpoint_path, pq_path, data_dir, output_dir, batch_size
+    """
+    main(args)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint_path", type=str, required=True)
     parser.add_argument("--pq_path", type=str, default=None, help="Path to trained PQ codebook (faiss file)")
-    parser.add_argument("--data_dir", type=str, default="/app/data")
-    parser.add_argument("--output_dir", type=str, default="/app/cache/index")
+    parser.add_argument("--data_dir", type=str, default="/vol/data")
+    parser.add_argument("--output_dir", type=str, default="/vol/cache/index")
     parser.add_argument("--batch_size", type=int, default=16) # Smaller batch because we expand windows inside
     
     args = parser.parse_args()
-    main(args)
+    index(args)

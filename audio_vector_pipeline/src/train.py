@@ -52,10 +52,19 @@ def main(args):
     print(f"Starting training on {trainer.num_devices} GPUs with strategy {trainer.strategy}")
     trainer.fit(system, datamodule=dm)
 
+def train(args):
+    """
+    Main training entry point.
+    args: Namespace or object with attributes:
+        data_dir, checkpoint_dir, epochs, batch_size, lr, 
+        auto_batch_size, accelerator, strategy
+    """
+    main(args)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="/app/data")
-    parser.add_argument("--checkpoint_dir", type=str, default="/app/checkpoints")
+    parser.add_argument("--data_dir", type=str, default="/vol/data")
+    parser.add_argument("--checkpoint_dir", type=str, default="/vol/checkpoints")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -64,4 +73,4 @@ if __name__ == "__main__":
     parser.add_argument("--strategy", type=str, default="auto")
     
     args = parser.parse_args()
-    main(args)
+    train(args)

@@ -61,8 +61,8 @@ class MusicPrintSystem(pl.LightningModule):
         # We need to process each song in the batch
         
         data_dict = batch[0]
-        audio_batch = data_dict["audio"] # (B, Time, 1)
-        labels = data_dict["label"]
+        audio_batch = data_dict["audio"].to(self.device) # (B, Time, 1)
+        labels = data_dict["label"].to(self.device)
         
         if audio_batch.dim() == 3:
             audio_batch = audio_batch.squeeze(-1)

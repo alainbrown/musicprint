@@ -59,13 +59,21 @@ def train_pq(args):
         with open(args.output_raw, "wb") as f:
             f.write(centroids.astype(np.float32).tobytes())
 
+def train_pq_model(args):
+    """
+    Main PQ training entry point.
+    args: Namespace or object with attributes:
+        checkpoint, data_dir, output, output_raw, num_samples, batch_size
+    """
+    train_pq(args)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--data_dir", type=str, default="/app/data")
-    parser.add_argument("--output", type=str, default="release/audio_pq.bin")
+    parser.add_argument("--data_dir", type=str, default="/vol/data")
+    parser.add_argument("--output", type=str, default="/vol/release/audio_pq.bin")
     parser.add_argument("--output_raw", type=str, default=None, help="Path to export raw centroids binary")
     parser.add_argument("--num_samples", type=int, default=256000)
     parser.add_argument("--batch_size", type=int, default=128)
     args = parser.parse_args()
-    train_pq(args)
+    train_pq_model(args)

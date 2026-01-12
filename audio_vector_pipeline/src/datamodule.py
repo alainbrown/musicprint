@@ -1,5 +1,5 @@
 import pytorch_lightning as pl
-from data.dali_loader import DALIGPULoader
+from dali_loader import DALIGPULoader
 import torch
 import os
 import glob
@@ -7,15 +7,22 @@ import random
 from isrc_utils import pack_isrc
 
 class MusicDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir, batch_size=32, val_split=0.05):
+    def __init__(self, data_dir, batch_size=32, val_split=0.05, window_secs=5.0):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.val_split = val_split
+        self.window_secs = window_secs
         
         # Scrape files
-        self.all_files = sorted(glob.glob(os.path.join(data_dir, "**/*.mp3"), recursive=True) + 
-                               glob.glob(os.path.join(data_dir, "**/*.wav"), recursive=True))
+        # Priority: FLAC (Pre-processed) > WAV > MP3
+        self.all_files = sorted(glob.glob(os.path.join(data_dir, "**/*.flac"), recursive=True))
+        
+        if not self.all_files:
+            self.all_files = sorted(glob.glob(os.path.join(data_dir, "**/*.wav"), recursive=True))
+            
+        if not self.all_files:
+            self.all_files = sorted(glob.glob(os.path.join(data_dir, "**/*.mp3"), recursive=True))
         
         # Shuffle with a fixed seed
         random.seed(42)
@@ -58,6 +65,7 @@ class MusicDataModule(pl.LightningDataModule):
             device_id=device_id,
             shard_id=shard_id,
             num_shards=num_shards,
+            window_secs=self.window_secs,
             augment=True
         )
 
@@ -76,5 +84,6 @@ class MusicDataModule(pl.LightningDataModule):
             device_id=device_id,
             shard_id=shard_id,
             num_shards=num_shards,
+            window_secs=self.window_secs,
             augment=False
         )

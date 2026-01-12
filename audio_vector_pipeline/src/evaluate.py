@@ -7,7 +7,7 @@ import numpy as np
 import wandb
 from system import MusicPrintSystem
 from datamodule import MusicDataModule
-from data.dali_loader import DALIGPULoader
+from dali_loader import DALIGPULoader
 import nvidia.dali.fn as fn
 import nvidia.dali.types as types
 
@@ -160,10 +160,18 @@ def evaluate_real_world(args):
     wandb.log({"recall_at_1": recall, "failures": failure_table})
     wandb.finish()
 
+def evaluate(args):
+    """
+    Main evaluation entry point.
+    args: Namespace or object with attributes:
+        checkpoint_path, data_dir, batch_size
+    """
+    evaluate_real_world(args)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint_path", type=str, required=True)
-    parser.add_argument("--data_dir", type=str, default="/app/data")
+    parser.add_argument("--data_dir", type=str, default="/vol/data")
     parser.add_argument("--batch_size", type=int, default=32)
     args = parser.parse_args()
-    evaluate_real_world(args)
+    evaluate(args)

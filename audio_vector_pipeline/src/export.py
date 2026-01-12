@@ -47,9 +47,17 @@ def export_to_coreml(args):
     
     print(f"✅ Successfully exported CoreML model to: {output_path}")
 
+def export(args):
+    """
+    Main export entry point.
+    args: Namespace or object with attributes:
+        checkpoint_path, output_dir
+    """
+    export_to_coreml(args)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint_path", type=str, required=True)
-    parser.add_argument("--output_dir", type=str, default="/app/release")
+    parser.add_argument("--output_dir", type=str, default="/vol/release")
     args = parser.parse_args()
-    export_to_coreml(args)
+    export(args)

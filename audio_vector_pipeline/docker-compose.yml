@@ -8,15 +8,16 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - HF_HOME=/app/cache/huggingface
+      - HF_HOME=/vol/cache/huggingface
       - JUPYTER_TOKEN=musicprint  # Security token for easy login
     volumes:
       - ./src:/app/src
-      - ./data:/app/data
-      - ./cache:/app/cache
-      - ./checkpoints:/app/checkpoints
-      - ./release:/app/release # Exported CoreML models
-      - ./notebooks:/app/notebooks # New volume for notebooks
+      - ./notebooks:/app/notebooks
+      - ./release:/vol/release # Bind mount for accessible artifacts
+      - musicprint_audio_data:/vol/data
+      - musicprint_audio_logs:/vol/logs
+      - musicprint_audio_checkpoints:/vol/checkpoints
+      - musicprint_audio_cache:/vol/cache
     ports:
       - "8888:8888"
     deploy:
@@ -31,3 +32,9 @@ services:
     tty: true
     # Launch Jupyter Lab by default
     command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='musicprint'
+
+volumes:
+  musicprint_audio_data:
+  musicprint_audio_logs:
+  musicprint_audio_checkpoints:
+  musicprint_audio_cache:
