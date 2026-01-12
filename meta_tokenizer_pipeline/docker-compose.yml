@@ -10,7 +10,9 @@ services:
     volumes:
       - ./src:/app/src
       - ./notebooks:/app/notebooks
-      - ./release:/app/release
+      - ./release:/vol/release
+      - musicprint_meta_data:/vol/data
+      - musicprint_meta_cache:/vol/cache
     environment:
       - JUPYTER_TOKEN=musicprint
       - DB_HOST=mb_db
@@ -39,3 +41,5 @@ services:
 
 volumes:
   mb_pgdata:
+  musicprint_meta_data:
+  musicprint_meta_cache:

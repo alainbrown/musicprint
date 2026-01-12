@@ -1,78 +1,57 @@
 # %% [markdown]
-# # System-Wide Tokenizer Optimizer (Scientific Back-Solver)
+# # System-Wide Tokenizer Optimizer & Pipeline Smoke Test
 # 
-# This notebook implements a non-sampled, data-driven approach to find the mathematically optimal vocabulary size for the MusicPrint metadata database.
+# This notebook serves two purposes:
+# 1. **Scientific Back-Solver:** A non-sampled, data-driven approach to find the mathematically optimal vocabulary size.
+# 2. **End-to-End Smoke Test:** verifying the production pipeline modules (`src/*.py`).
 # 
 # ## The Problem
 # We need to store 100 Million tracks (Artist, Album, Title) on a mobile device with less than 3.0 GB total storage.
-# The size of the database depends on two opposing forces:
-# 1. **Vocabulary Size (V):** A larger vocabulary means fewer tokens per song title (better compression).
-# 2. **Bit-Width Penalty:** As the vocabulary size crosses certain thresholds ($2^{14}, 2^{16}$), the number of bytes required to store each token ID increases.
-# 3. **Model Weight Penalty:** The final layer of the MERT neural network grows linearly with the vocabulary size.
-# 
-# ## Methodology: The "Master Tokenizer" Approach
-# To find the true global minimum without "guess and check", we:
-# 1. **Stream the entire MusicBrainz dataset** (45M+ strings) into a single corpus.
-# 2. **Train a 200,000-token Master Tokenizer** to explore the full potential of BPE merges.
-# 3. **Back-solve for the optimum:** We analyze the frequency of every merge and calculate the total system footprint for every possible vocab size from 1,000 to 200,000.
 
-# %%
+# %% 
 import os
-import psycopg2
-import pandas as pd
-import numpy as np
-from tokenizers import Tokenizer, models, pre_tokenizers, trainers, decoders
+import sys
 import time
 import struct
+import pandas as pd
+import numpy as np
+import psycopg2
+import mmap
+from tokenizers import Tokenizer, models, pre_tokenizers, trainers, decoders
+
+# Ensure we can import from src
+sys.path.append(os.path.abspath('../src'))
+
+import train_tokenizer
+import build_db
+import export_vocab
+import import_mb # For Ingestion Verification
+from build_db import pack_isrc
 
 # Config
 DB_HOST = os.environ.get("DB_HOST", "mb_db")
 DB_NAME = os.environ.get("DB_NAME", "musicbrainz_db")
 DB_USER = os.environ.get("DB_USER", "musicbrainz")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "musicbrainz")
-CORPUS_PATH = "/tmp/full_musicbrainz_corpus.txt"
+
+# Paths (Smoke Test / Verification)
+# CRITICAL: We use /tmp or a cache volume to avoid overwriting real release artifacts
+DATA_DIR = "/vol/data"
+TEST_ARTIFACTS_DIR = "/tmp/smoke_test_artifacts"
+CACHE_DIR = "/vol/cache"
+
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(TEST_ARTIFACTS_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+CORPUS_PATH = os.path.join(DATA_DIR, "full_musicbrainz_corpus.txt")
 
 def get_db_connection():
     return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
 
 # %% [markdown]
-# ## 0. ISRC Bitpacking Utility
-# We use a 50-bit packing scheme to fit 12-char ISRCs into a uint64.
-# This saves ~400MB at 100M scale compared to raw strings.
-
-# %%
-def pack_isrc(isrc_str):
-    if not isrc_str or len(isrc_str) != 12: return 0
-    isrc_str = isrc_str.upper()
-    try:
-        # Country: 10 bits
-        c1, c2 = ord(isrc_str[0]) - ord('A'), ord(isrc_str[1]) - ord('A')
-        country = (c1 * 26) + c2
-        # Registrant: 16 bits (Base 36)
-        def c2i(c):
-            if 'A' <= c <= 'Z': return ord(c) - ord('A')
-            if '0' <= c <= '9': return ord(c) - ord('0') + 26
-            return 0
-        reg = (c2i(isrc_str[2])*36*36) + (c2i(isrc_str[3])*36) + c2i(isrc_str[4])
-        # Year: 7 bits, Designation: 17 bits
-        year, desig = int(isrc_str[5:7]), int(isrc_str[7:12])
-        return (country << 40) | (reg << 24) | (year << 17) | desig
-    except: return 0
-
-def unpack_isrc(packed):
-    desig = packed & 0x1FFFF
-    year = (packed >> 17) & 0x7F
-    reg = (packed >> 24) & 0xFFFF
-    country = (packed >> 40) & 0x3FF
-    c1, c2 = chr((country // 26) + ord('A')), chr((country % 26) + ord('A'))
-    def i2c(i): return chr(i + ord('A')) if i < 26 else chr(i - 26 + ord('0'))
-    r1, r2, r3 = i2c(reg // 1296), i2c((reg // 36) % 36), i2c(reg % 36)
-    return f"{c1}{c2}{r1}{r2}{r3}{year:02d}{desig:05d}"
-
-# %% [markdown]
 # ## 1. Build Full Dataset Corpus
 # We extract every recording title, artist name, and release name from the MusicBrainz Postgres mirror.
-# This ensures our analysis captures the "Long Tail" of rare words and complex international characters.
 
 # %% 
 def build_full_corpus():
@@ -112,51 +91,44 @@ def build_full_corpus():
     elapsed = time.time() - start_time
     print(f"Done! Dumped {count:,} strings in {elapsed:.1f}s.")
 
-build_full_corpus()
+# Uncomment to regenerate corpus if needed
+# build_full_corpus()
 
 # %% [markdown]
 # ## 2. Train Master Tokenizer (200k Vocab)
-# We train a single, massive BPE model. Because BPE merges are discovered in order of frequency, 
-# a 200k model contains all the information of a 10k, 32k, or 64k model as its first N merges.
+# We use the production `train_tokenizer` module to train a massive BPE model for analysis.
 
 # %% 
 MAX_VOCAB = 200000
-MASTER_MODEL_PATH = "/tmp/master_tokenizer_200k.json"
+MASTER_MODEL_PATH = os.path.join(CACHE_DIR, "master_tokenizer_200k.json")
 
-def train_master_tokenizer():
-    if os.path.exists(MASTER_MODEL_PATH):
-        print("Master tokenizer already trained.")
-        return Tokenizer.from_file(MASTER_MODEL_PATH)
-
+if not os.path.exists(MASTER_MODEL_PATH) and os.path.exists(CORPUS_PATH):
     print(f"Training Master BPE Tokenizer (Vocab: {MAX_VOCAB})...")
-    start_time = time.time()
-    
-    tokenizer = Tokenizer(models.BPE())
-    tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
-    
-    trainer = trainers.BpeTrainer(
+    # Using the production module logic
+    train_tokenizer.train_tokenizer(
+        input_file=CORPUS_PATH,
+        output_path=MASTER_MODEL_PATH,
         vocab_size=MAX_VOCAB,
-        min_frequency=2,
-        special_tokens=["<UNK>", "<PAD>"]
+        use_db=False # Use the file we just dumped (or existing one)
     )
-    
-    tokenizer.train([CORPUS_PATH], trainer)
-    tokenizer.save(MASTER_MODEL_PATH)
-    
-    elapsed = time.time() - start_time
-    print(f"Master training complete in {elapsed:.1f}s.")
-    return tokenizer
-
-master_tokenizer = train_master_tokenizer()
+    master_tokenizer = Tokenizer.from_file(MASTER_MODEL_PATH)
+elif os.path.exists(MASTER_MODEL_PATH):
+    print("Loading existing Master Tokenizer...")
+    master_tokenizer = Tokenizer.from_file(MASTER_MODEL_PATH)
+else:
+    print("Skipping Master Tokenizer training (Corpus not found).")
+    master_tokenizer = None
 
 # %% [markdown]
-# ## 3. Usage Accounting
+# ## 3. Usage Accounting & Global Optimizer (Scientific Back-Solver)
 # We simulate the tokenization of 1 Million strings using the master vocabulary. 
-# We count how many times each token ID is used. This allows us to calculate exactly 
-# how much space we save (or lose) by including any specific token in our final production model.
+# We count how many times each token ID is used to calculate space savings.
 
 # %% 
 def analyze_token_frequencies(tokenizer, sample_limit=1000000):
+    if not tokenizer or not os.path.exists(CORPUS_PATH):
+        return None
+        
     print(f"Analyzing token usage on {sample_limit:,} sample strings...")
     
     token_counts = np.zeros(tokenizer.get_vocab_size(), dtype=np.int64)
@@ -179,18 +151,19 @@ def analyze_token_frequencies(tokenizer, sample_limit=1000000):
                 
     return token_counts
 
-usage_frequencies = analyze_token_frequencies(master_tokenizer, sample_limit=1000000)
+if master_tokenizer:
+    usage_frequencies = analyze_token_frequencies(master_tokenizer, sample_limit=1000000)
+else:
+    usage_frequencies = None
 
 # %% [markdown]
 # ## 4. The Global Optimizer
 # We find the global minimum by sweeping across vocab sizes.
-# 
-# We calculate both:
-# 1. **Current Scale (Ground Truth):** Based on the 45.3M records in the DB.
-# 2. **Target Scale (Projection):** Projected to the 100M song goal.
 
-# %%
+# %% 
 def find_optimum(frequencies, master_tokenizer):
+    if frequencies is None: return
+
     # Actual counts from DB
     current_count = 45384078 
     sample_size = 1000000
@@ -230,7 +203,7 @@ def find_optimum(frequencies, master_tokenizer):
         results.append({
             "v": v, 
             "current_total": current_total_mb, 
-            "current_db": current_db_mb, 
+            "current_db": current_db_mb,
             "target_total": target_total_mb,
             "model": model_mb
         })
@@ -252,37 +225,83 @@ def find_optimum(frequencies, master_tokenizer):
     
     return df_res
 
-optimum_df = find_optimum(usage_frequencies, master_tokenizer)
-# %% [markdown]
-# ## 5. Final Conclusion & Architectural Decision
-# 
-# ### The Optimization Paradox
-# Our analysis of the current **45.4 Million** records suggests a mathematical optimum of **~31,000 tokens**. However, we are making an intentional architectural decision to use **65,535 tokens**.
-# 
-# ### Why 65,535?
-# 1. **Fixed Storage Cost (uint16):** We have chosen to store token IDs as 2-byte integers. A vocabulary of 32,000 and 65,535 both use exactly **16 bits per token**. There is zero per-song storage penalty for the larger vocabulary.
-# 2. **Industry Growth (Future Proofing):** The music industry is currently adding ~40 million new tracks per year (100k+ per day). By the time this app hits maturity, the catalog will likely exceed 100M-200M tracks.
-# 3. **The Scaling inflection Point:** As demonstrated in our 100M projection, the 65k vocabulary becomes mathematically superior once the catalog grows. Using it now prevents a disruptive "Breaking Change" update to the tokenizer in the near future.
-# 4. **Negligible Model Weight Penalty:** The cost of increasing the vocab from 32k to 65k is a mere **~50MB** in the AI model weights. Given our ~2.3GB total projected footprint against a 3.0GB limit, this is a highly efficient "insurance policy" for future scale.
-# 
-# **Final Decision:**
-# *   **Production Vocab Size:** 65,535
-# *   **Storage Format:** Fixed-Width uint16
-# *   **Artifact:** `release/music_vocab_final.json`
+if usage_frequencies is not None:
+    optimum_df = find_optimum(usage_frequencies, master_tokenizer)
 
 # %% [markdown]
-# ## 9. Production Binary Verification
-# This section tests the actual production `music_meta.bin` file generated by `build_db.py`.
-# It simulates the iOS app's high-speed lookup logic using `mmap` and binary search.
+# # --- PRODUCTION PIPELINE SMOKE TEST ---
+# Below we execute the refactored production modules to ensure the pipeline works end-to-end.
+# **NOTE:** We output to a temporary directory to avoid overwriting production release artifacts.
 
-# %%
-import mmap
+# %% [markdown]
+# ## Step 0: Ingestion Verification (Schema Check)
+# We verify that the `import_mb` module can successfully connect to the DB and initialize the schema.
 
+# %% 
+print("Step 0: Verifying Schema Initialization...")
+conn = import_mb.get_db_connection()
+conn.autocommit = True
+# This ensures the SQL scripts in src/ can be downloaded and applied
+import_mb.init_schema(conn.cursor())
+conn.close()
+print("✅ Schema Verified.")
+
+# %% [markdown]
+# ## Step 1: Train Production Tokenizer
+# We train a small tokenizer (e.g., 32k) using the production script.
+
+# %% 
+TEST_TOKENIZER_PATH = os.path.join(TEST_ARTIFACTS_DIR, "music_encoder.json")
+
+print(f"Step 1: Training Test Tokenizer to {TEST_TOKENIZER_PATH}...")
+# We can use a smaller subset or the full corpus. 
+# For smoke test, let's just ensure it runs.
+if not os.path.exists(TEST_TOKENIZER_PATH):
+    # Create dummy args-like object or call function directly
+    train_tokenizer.train_tokenizer(
+        input_file=CORPUS_PATH if os.path.exists(CORPUS_PATH) else None,
+        output_path=TEST_TOKENIZER_PATH,
+        vocab_size=32000,
+        use_db=True if not os.path.exists(CORPUS_PATH) else False, # Fallback to DB if corpus missing
+        db_query="SELECT name FROM musicbrainz.artist LIMIT 10000" if not os.path.exists(CORPUS_PATH) else None # fast smoke test query
+    )
+
+# %% [markdown]
+# ## Step 2: Export Binary Vocab
+# Convert the JSON tokenizer to the optimized binary format for the app.
+
+# %% 
+TEST_VOCAB_BIN = os.path.join(TEST_ARTIFACTS_DIR, "music_decoder.bin")
+
+print(f"Step 2: Exporting Binary Vocab to {TEST_VOCAB_BIN}...")
+export_vocab.export_to_binary(TEST_TOKENIZER_PATH, TEST_VOCAB_BIN)
+
+# %% [markdown]
+# ## Step 3: Build Metadata Database
+# Build the compact binary database using the tokenizer.
+
+# %% 
+TEST_DB_BIN = os.path.join(TEST_ARTIFACTS_DIR, "music_meta.bin")
+TEST_MANIFEST_PATH = os.path.join(TEST_ARTIFACTS_DIR, "album_manifest.csv")
+
+class BuildArgs:
+    tokenizer = TEST_TOKENIZER_PATH
+    output = TEST_DB_BIN
+
+print(f"Step 3: Building Database to {TEST_DB_BIN}...")
+# We use the build_db module. 
+# Note: build_db.build() takes args.
+build_db.build(BuildArgs())
+
+# %% [markdown]
+# ## Step 4: Verify Production Binary (Client-Side Simulation)
+# We simulate the iOS app's high-speed lookup logic using `mmap` and binary search.
+
+# %% 
 def verify_production_binary(target_isrcs=None):
-    # Use absolute paths for stability in docker exec
-    bin_path = "/app/release/music_meta.bin"
-    encoder_path = "/app/release/music_encoder.json"
-    manifest_path = "/app/release/album_manifest.csv"
+    bin_path = TEST_DB_BIN
+    encoder_path = TEST_TOKENIZER_PATH
+    manifest_path = TEST_MANIFEST_PATH
     
     if not os.path.exists(bin_path):
         print(f"Error: Production binary not found at {bin_path}. Run build_db.py first.")
@@ -304,8 +323,6 @@ def verify_production_binary(target_isrcs=None):
         mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
         
         # 1. Parse Header (128 bytes)
-        # Identity: Magic[4], Version[4], SongCount[4], ArtistCount[4], AlbumCount[4]
-        # Pointers: 7 x uint64
         magic, version, song_count, artist_count, album_count = struct.unpack("<4sIIII", mm[0:20])
         offsets = struct.unpack("<QQQQQQQ", mm[20:76])
         
@@ -401,12 +418,17 @@ def verify_production_binary(target_isrcs=None):
 
         # 6. Test against actual data
         if not target_isrcs:
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("SELECT i.isrc FROM musicbrainz.isrc i JOIN musicbrainz.recording r ON i.recording = r.id LIMIT 5")
-            target_isrcs = [r[0] for r in cur.fetchall()]
-            cur.close()
-            conn.close()
+            # Try to fetch some real ISRCs if DB is available
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("SELECT i.isrc FROM musicbrainz.isrc i JOIN musicbrainz.recording r ON i.recording = r.id LIMIT 5")
+                target_isrcs = [r[0] for r in cur.fetchall()]
+                cur.close()
+                conn.close()
+            except:
+                print("Could not fetch ISRCs from DB (check connection).")
+                target_isrcs = []
 
         print("\nTesting Lookups (Metadata + Album Art Bridge):")
         for isrc in target_isrcs:
@@ -414,39 +436,34 @@ def verify_production_binary(target_isrcs=None):
             res = lookup(isrc)
             elapsed = (time.time() - start) * 1000
             if res:
-                print(f"  ISRC: {isrc}")
-                print(f"  Song:   {res['title']}")
-                print(f"  Artist: {res['artist']}")
-                print(f"  Album:  {res['album']} (Idx: {res['album_idx']})")
-                print(f"  Art ID: {res['album_uuid']}")
+                print(f"  ISRC: {isrc}\n")
+                print(f"  Song:   {res['title']}\n")
+                print(f"  Artist: {res['artist']}\n")
+                print(f"  Album:  {res['album']} (Idx: {res['album_idx']})\n")
+                print(f"  Art ID: {res['album_uuid']}\n")
                 print(f"  Time:   {elapsed:.2f}ms\n")
             else:
                 print(f"  {isrc} -> NOT FOUND\n")
 
         mm.close()
 
-# %% [markdown]
-# ## 10. Album Manifest Verification (Full Integrity Check)
-# We verify the `album_manifest.csv` against the `music_meta.bin` file.
-# Since `art.bin` will be built sequentially from the CSV, we must prove that:
-# `CSV[i].AlbumName == Binary.AlbumTable[i].Name`
-# 
-# We perform this check for **100% of the albums** to guarantee zero alignment errors.
+verify_production_binary()
 
-# %%
+# %% [markdown]
+# ## Step 5: Manifest Integrity Check (100% Scan)
+# We verify the `album_manifest.csv` against the `music_meta.bin` file.
+
+# %% 
 def verify_manifest_integrity():
-    manifest_path = "/app/release/album_manifest.csv"
-    bin_path = "/app/release/music_meta.bin"
-    encoder_path = "/app/release/music_encoder.json"
+    manifest_path = TEST_MANIFEST_PATH
+    bin_path = TEST_DB_BIN
+    encoder_path = TEST_TOKENIZER_PATH
 
     if not os.path.exists(manifest_path) or not os.path.exists(bin_path):
         print("Files not found.")
         return
 
     print(f"--- 100% Integrity Check: Manifest vs Binary ---")
-    import pandas as pd
-    import mmap
-    from tqdm import tqdm
     
     # 1. Load Resources
     df = pd.read_csv(manifest_path)
@@ -466,11 +483,10 @@ def verify_manifest_integrity():
         print(f"Verifying {total:,} albums...")
         
         # 3. Iterate EVERY album
-        # We zip the dataframe to avoid overhead
-        for row in tqdm(df.itertuples(index=False), total=total):
+        for row in df.itertuples(index=False):
             idx = row.album_index
             csv_name = str(row.album_name) # Handle NaNs
-            
+
             # Read from Binary at Index `idx`
             entry_pos = off_album_ranges + (idx * 8)
             _, name_off = struct.unpack("<II", mm[entry_pos:entry_pos+8])
@@ -484,19 +500,16 @@ def verify_manifest_integrity():
             # Normalize Empty/Null states
             def normalize(s):
                 s = str(s).strip()
-                if s.lower() in ["nan", "none", "null", "n/a", "na", ""]: return ""
+                if s.lower() in ["nan", "none", "null", "n/a", "na", ""]:
+                    return ""
                 return s.replace('""', '"')
 
             c_norm = normalize(csv_name)
             b_norm = normalize(bin_name)
             
-            # Robust comparison at byte level to handle truncation artifacts
+            # Robust comparison
             c_bytes = c_norm.encode('utf-8', errors='ignore')
             b_bytes = b_norm.encode('utf-8', errors='ignore')
-            
-            # Binary should be a prefix of CSV. 
-            # We strip the last 3 bytes of the binary string to account for 
-            # partial multi-byte character truncation artifacts.
             b_check = b_bytes[:-3] if len(b_bytes) > 3 else b_bytes
             
             if not c_bytes.startswith(b_check):
@@ -507,8 +520,6 @@ def verify_manifest_integrity():
                 if errors > 10: 
                     print("Too many errors, aborting.")
                     break
-
-
         
         mm.close()
         
@@ -519,5 +530,68 @@ def verify_manifest_integrity():
 
 verify_manifest_integrity()
 
+# %% [markdown]
+# ## Step 6: Binary Decoder Verification
+# We confirm that `music_decoder.bin` matches the JSON source.
 
+# %% 
+class BinaryDecoder:
+    def __init__(self, path):
+        with open(path, "rb") as f:
+            self.mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+        
+        # Header: Magic(4s), Version(I), Token Count(I)
+        magic, version, count = struct.unpack("<4sII", self.mm[0:12])
+        self.count = count
+        self.offsets_start = 12
+        # Offsets are (count + 1) * 4 bytes
+        self.data_start = 12 + (count + 1) * 4
+        print(f"BinaryDecoder Loaded: {count} tokens")
+        
+    def decode(self, token_id):
+        if token_id >= self.count: return None
+        
+        # Read offsets
+        off_pos = self.offsets_start + (token_id * 4)
+        start, end = struct.unpack("<II", self.mm[off_pos:off_pos+8])
+        
+        # Read bytes
+        b = self.mm[self.data_start + start : self.data_start + end]
+        return b.decode("utf-8")
 
+def verify_binary_decoder_integrity():
+    if not os.path.exists(TEST_VOCAB_BIN) or not os.path.exists(TEST_TOKENIZER_PATH):
+        print("Decoder artifacts missing.")
+        return
+
+    print("\n--- Verifying Binary Decoder ---")
+    decoder = BinaryDecoder(TEST_VOCAB_BIN)
+    json_tok = Tokenizer.from_file(TEST_TOKENIZER_PATH)
+    
+    vocab_size = json_tok.get_vocab_size()
+    
+    # Check random sample
+    errors = 0
+    samples = 100
+    print(f"Checking {samples} random tokens...")
+    
+    for _ in range(samples):
+        tid = np.random.randint(0, vocab_size)
+        
+        # JSON Tokenizer 'id_to_token' returns the raw BPE token (e.g. "ĠThe")
+        expected = json_tok.id_to_token(tid)
+        actual = decoder.decode(tid)
+        
+        if expected != actual:
+            print(f"❌ MISMATCH at ID {tid}")
+            print(f"   JSON: {expected}")
+            print(f"   BIN:  {actual}")
+            errors += 1
+            if errors > 5: break
+            
+    if errors == 0:
+        print("✅ SUCCESS: Binary Decoder matches JSON Tokenizer.")
+    else:
+        print("❌ FAILED: Decoder mismatch.")
+
+verify_binary_decoder_integrity()

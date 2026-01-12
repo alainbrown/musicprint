@@ -4,13 +4,13 @@ import psycopg2
 import time
 import requests
 import re
+import argparse
 
 # Configuration
 MB_FTP_BASE = "http://ftp.musicbrainz.org/pub/musicbrainz/data/fullexport"
 TYPES_SQL_URL = "https://raw.githubusercontent.com/metabrainz/musicbrainz-server/master/admin/sql/CreateTypes.sql"
 TABLES_SQL_URL = "https://raw.githubusercontent.com/metabrainz/musicbrainz-server/master/admin/sql/CreateTables.sql"
 
-INPUT_FILE = "/tmp/mbdump.tar.bz2"
 DB_HOST = os.environ.get("DB_HOST", "mb_db")
 DB_NAME = os.environ.get("DB_NAME", "musicbrainz_db")
 DB_USER = os.environ.get("DB_USER", "musicbrainz")
@@ -103,13 +103,20 @@ def init_schema(cur):
     
     print("Schema initialized successfully.")
 
-def import_mb():
+def import_data(args):
+    input_file = args.input_file
+    
     # 1. Ensure Data is present
-    if not os.path.exists(INPUT_FILE):
-        url = get_latest_url()
-        download_file(url, INPUT_FILE)
+    if not os.path.exists(input_file):
+        print(f"File {input_file} not found locally.")
+        if args.download:
+             url = get_latest_url()
+             download_file(url, input_file)
+        else:
+             print("Download not requested. Exiting.")
+             return
     else:
-        print(f"File {INPUT_FILE} already exists. Skipping download.")
+        print(f"File {input_file} already exists. Skipping download.")
 
     # 2. Connect & Init Schema
     conn = get_db_connection()
@@ -121,8 +128,8 @@ def import_mb():
     # 3. Import Data
     cur.execute("SET search_path TO musicbrainz, public;")
 
-    print(f"Opening {INPUT_FILE} for extraction...")
-    with tarfile.open(INPUT_FILE, mode="r:bz2") as tar:
+    print(f"Opening {input_file} for extraction...")
+    with tarfile.open(input_file, mode="r:bz2") as tar:
         for member in tar:
             if member.name in TARGET_TABLES:
                 table_name = TARGET_TABLES[member.name]
@@ -149,5 +156,11 @@ def import_mb():
     print("Import process finished.")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="MusicBrainz Importer")
+    parser.add_argument("--input_file", type=str, default="/vol/data/mbdump.tar.bz2", help="Path to mbdump.tar.bz2")
+    parser.add_argument("--download", action="store_true", help="Download if missing")
+    
+    args = parser.parse_args()
+    
     print(">>> MusicBrainz Importer Starting...")
-    import_mb()
+    import_data(args)

@@ -2,6 +2,7 @@ import os
 import psycopg2
 import struct
 import time
+import argparse
 from tokenizers import Tokenizer
 
 # Configuration
@@ -9,9 +10,6 @@ DB_HOST = os.environ.get("DB_HOST", "mb_db")
 DB_NAME = os.environ.get("DB_NAME", "musicbrainz_db")
 DB_USER = os.environ.get("DB_USER", "musicbrainz")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "musicbrainz")
-
-TOKENIZER_PATH = "release/music_encoder.json"
-OUTPUT_PATH = "release/music_meta.bin"
 
 # UI-Driven Truncation Limits
 LIMIT_ARTIST = 15
@@ -36,13 +34,16 @@ def pack_isrc(isrc_str):
 def get_db_connection():
     return psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD)
 
-def build_db():
+def build(args):
     print(">>> Building Unified Clustered Metadata + ISRC Index...")
     
-    if not os.path.exists(TOKENIZER_PATH):
-        print(f"Error: Tokenizer not found at {TOKENIZER_PATH}")
+    tokenizer_path = args.tokenizer
+    output_path = args.output
+    
+    if not os.path.exists(tokenizer_path):
+        print(f"Error: Tokenizer not found at {tokenizer_path}")
         return
-    tokenizer = Tokenizer.from_file(TOKENIZER_PATH)
+    tokenizer = Tokenizer.from_file(tokenizer_path)
     
     conn = get_db_connection()
     cur = conn.cursor(name='build_db_cursor')
@@ -84,7 +85,8 @@ def build_db():
     album_name_map = {}
     
     # Manifest for Art Pipeline (Index -> UUID)
-    manifest_file = open("release/album_manifest.csv", "w")
+    manifest_path = os.path.join(os.path.dirname(output_path), "album_manifest.csv")
+    manifest_file = open(manifest_path, "w")
     manifest_file.write("album_index,release_uuid,album_name\n")
 
     last_artist_id = -1
@@ -161,7 +163,7 @@ def build_db():
     off_artist_blob = off_title_blob + len(title_blob)
     off_album_blob = off_artist_blob + len(artist_name_blob)
     
-    with open(OUTPUT_PATH, "wb") as f:
+    with open(output_path, "wb") as f:
         # Header (Version 3: Clustered + Sorted Index)
         f.write(struct.pack("<4sIIII", b"MPDB", 3, song_count, len(artist_ranges), len(album_ranges)))
         f.write(struct.pack("<QQQQQQQ", 
@@ -184,7 +186,13 @@ def build_db():
         f.write(artist_name_blob)
         f.write(album_name_blob)
 
-    print(f"\nSUCCESS! Created {OUTPUT_PATH} with {song_count:,} tracks in {time.time()-start_time:.1f}s.")
+    print(f"\nSUCCESS! Created {output_path} with {song_count:,} tracks in {time.time()-start_time:.1f}s.")
 
 if __name__ == "__main__":
-    build_db()
+    parser = argparse.ArgumentParser(description="Build MusicPrint Database")
+    parser.add_argument("--tokenizer", type=str, default="/vol/release/music_encoder.json", help="Path to tokenizer JSON")
+    parser.add_argument("--output", type=str, default="/vol/release/music_meta.bin", help="Path to output binary")
+    
+    args = parser.parse_args()
+    
+    build(args)

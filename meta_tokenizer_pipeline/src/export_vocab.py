@@ -55,11 +55,14 @@ def export_to_binary(json_path, bin_path):
     print(f"Success! Binary size: {file_size / 1024:.2f} KB")
     print(f"Estimated savings vs JSON: {(1 - file_size/os.path.getsize(json_path))*100:.1f}%")
 
+def export(args):
+    export_to_binary(args.input, args.output)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export Tokenizer JSON to Production Binary")
-    parser.add_argument("--input", type=str, default="release/music_encoder.json", help="Input JSON path")
-    parser.add_argument("--output", type=str, default="release/music_decoder.bin", help="Output binary path")
+    parser.add_argument("--input", type=str, default="/vol/release/music_encoder.json", help="Input JSON path")
+    parser.add_argument("--output", type=str, default="/vol/release/music_decoder.bin", help="Output binary path")
     
     args = parser.parse_args()
     
-    export_to_binary(args.input, args.output)
+    export(args)

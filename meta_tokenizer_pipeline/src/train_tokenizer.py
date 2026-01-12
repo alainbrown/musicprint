@@ -18,7 +18,7 @@ def train_tokenizer(input_file, output_path, vocab_size=32000, columns=["song.ti
     """
     
     # 1. Prepare Data Source
-    temp_train_file = "/tmp/tokenizer_train_corpus.txt"
+    temp_train_file = "/vol/data/tokenizer_train_corpus.txt"
     
     if use_db:
         print("Loading data from Database...")
@@ -110,10 +110,20 @@ def train_tokenizer(input_file, output_path, vocab_size=32000, columns=["song.ti
     print(f"Success! Tokenizer saved to: {output_path}")
     print(f"Vocab Size: {tokenizer.get_vocab_size()}")
 
+def train(args):
+    train_tokenizer(
+        input_file=args.input,
+        output_path=args.output,
+        vocab_size=args.vocab_size,
+        columns=args.columns,
+        use_db=args.use_db,
+        db_query=args.db_query
+    )
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train BPE Tokenizer for Music Metadata")
     parser.add_argument("--input", type=str, required=False, help="Path to input CSV or TXT file")
-    parser.add_argument("--output", type=str, required=True, help="Path to save tokenizer.json")
+    parser.add_argument("--output", type=str, default="/vol/release/music_encoder.json", help="Path to save tokenizer.json")
     parser.add_argument("--columns", nargs='+', default=["song.title", "artist.name"], help="List of CSV columns to train on")
     parser.add_argument("--vocab_size", type=int, default=32000, help="Vocabulary size (max 65535)")
     parser.add_argument("--use-db", action="store_true", help="Fetch data from Postgres DB")
@@ -124,11 +134,4 @@ if __name__ == "__main__":
     if not args.use_db and not args.input:
         parser.error("Must specify either --input or --use-db")
     
-    train_tokenizer(
-        input_file=args.input,
-        output_path=args.output,
-        vocab_size=args.vocab_size,
-        columns=args.columns,
-        use_db=args.use_db,
-        db_query=args.db_query
-    )
+    train(args)
