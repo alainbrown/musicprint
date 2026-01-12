@@ -3,8 +3,13 @@ services:
     build: .
     container_name: musicprint-art-tokenizer
     volumes:
-      - ./:/app
-      - ./cache:/app/cache
+      - ./src:/app/src
+      - ./notebooks:/app/notebooks
+      - art-pipeline-data:/vol/data
+      - art-pipeline-logs:/vol/logs
+      - art-pipeline-checkpoints:/vol/checkpoints
+    environment:
+      - PYTHONPATH=/app/src
     # Enable GPU support if available (comment out if on CPU-only machine)
     deploy:
       resources:
@@ -15,3 +20,8 @@ services:
               capabilities: [gpu]
     shm_size: 8g
     command: tail -f /dev/null
+
+volumes:
+  art-pipeline-data:
+  art-pipeline-logs:
+  art-pipeline-checkpoints:

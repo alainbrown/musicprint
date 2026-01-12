@@ -10,7 +10,7 @@ from model import VQVAE
 
 # Configuration
 MODEL_OUTPUT = "release/visual_encoder.pth"
-CHECKPOINT_DIR = "checkpoints/"
+CHECKPOINT_DIR = "/vol/checkpoints"
 
 # Hyperparameters
 LEARNING_RATE = 1e-3
@@ -21,7 +21,7 @@ NUM_EMBEDDINGS = 1024
 EMBEDDING_DIM = 64
 COMMITMENT_COST = 0.25
 
-def train(data_dir, manifest_path, epochs=10, batch_size=32, auto_batch=False):
+def train(data_dir, manifest_path, epochs=10, batch_size=32, auto_batch=False, model_output_path=MODEL_OUTPUT):
     # 1. Setup Data
     transform = transforms.Compose([
         transforms.Resize((128, 128)),
@@ -49,7 +49,8 @@ def train(data_dir, manifest_path, epochs=10, batch_size=32, auto_batch=False):
         devices=1,
         max_epochs=epochs,
         callbacks=[checkpoint_callback],
-        enable_progress_bar=True
+        enable_progress_bar=True,
+        default_root_dir="/vol/logs"
     )
 
     # 4. Auto-Scaling Batch Size
@@ -80,8 +81,8 @@ def train(data_dir, manifest_path, epochs=10, batch_size=32, auto_batch=False):
     trainer.fit(model, train_dataloaders=loader)
     
     # 6. Export Legacy Weights
-    print(f"Exporting state dict to {MODEL_OUTPUT}...")
-    torch.save(model.state_dict(), MODEL_OUTPUT)
+    print(f"Exporting state dict to {model_output_path}...")
+    torch.save(model.state_dict(), model_output_path)
     print("Done.")
 
 if __name__ == "__main__":

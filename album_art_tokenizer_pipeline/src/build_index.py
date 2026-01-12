@@ -17,7 +17,7 @@ from model import VQVAE
 MANIFEST_PATH = "data/album_manifest.csv"
 OUTPUT_BIN = "release/art.bin"
 MODEL_PATH = "release/visual_encoder.pth"
-COVERS_DIR = "data/covers"
+COVERS_DIR = "/vol/data"
 
 # Model Hyperparameters (Must match training)
 NUM_HIDDENS = 128
@@ -26,11 +26,11 @@ NUM_RESIDUAL_HIDDENS = 32
 NUM_EMBEDDINGS = 1024 # 10-bit vocab
 EMBEDDING_DIM = 64
 
-def get_shard_path(uuid):
+def get_shard_path(uuid, covers_dir):
     if not uuid or len(uuid) < 4: return "misc"
-    return os.path.join(COVERS_DIR, uuid[:2], uuid[2:4], f"{uuid}.jpg")
+    return os.path.join(covers_dir, uuid[:2], uuid[2:4], f"{uuid}.jpg")
 
-def build_index():
+def build_index(manifest_path=MANIFEST_PATH, output_bin=OUTPUT_BIN, model_path=MODEL_PATH, covers_dir=COVERS_DIR):
     print(">>> Building Album Art Binary Index (art.bin)...")
     
     # 1. Setup Device
@@ -41,9 +41,9 @@ def build_index():
     model = VQVAE(NUM_HIDDENS, NUM_RESIDUAL_LAYERS, NUM_RESIDUAL_HIDDENS,
                   NUM_EMBEDDINGS, EMBEDDING_DIM).to(device)
     
-    if os.path.exists(MODEL_PATH):
-        print(f"Loading trained model from {MODEL_PATH}...")
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    if os.path.exists(model_path):
+        print(f"Loading trained model from {model_path}...")
+        model.load_state_dict(torch.load(model_path, map_location=device))
     else:
         print("⚠️ WARNING: No trained model found! Using random weights for testing.")
         print("   (Run src/train.py to generate a real codebook)")
@@ -51,11 +51,11 @@ def build_index():
     model.eval()
 
     # 3. Load Manifest
-    if not os.path.exists(MANIFEST_PATH):
+    if not os.path.exists(manifest_path):
         print("Error: Manifest not found.")
         return
     
-    df = pd.read_csv(MANIFEST_PATH)
+    df = pd.read_csv(manifest_path)
     print(f"Processing {len(df):,} albums...")
 
     # 4. Preprocessing
@@ -74,7 +74,7 @@ def build_index():
     total_processed = 0
     missing_count = 0
     
-    with open(OUTPUT_BIN, "wb") as f_out:
+    with open(output_bin, "wb") as f_out:
         # We process in chunks to batch GPU inference
         for i in tqdm(range(0, len(df), batch_size)):
             chunk = df.iloc[i:i+batch_size]
@@ -84,7 +84,7 @@ def build_index():
             valid_indices = [] # Which positions in the batch are valid images
             
             for local_idx, row in enumerate(chunk.itertuples()):
-                path = get_shard_path(row.release_uuid)
+                path = get_shard_path(row.release_uuid, covers_dir)
                 
                 if os.path.exists(path):
                     try:

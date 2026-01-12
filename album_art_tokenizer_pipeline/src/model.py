@@ -166,7 +166,7 @@ class VQVAE(pl.LightningModule):
         
         self.log('train_loss', total_loss, prog_bar=True)
         self.log('recon_error', recon_error, prog_bar=True)
-        self.log('perplexity', perplexity, prog_bar=True)
+        self.log('perplexity', perplexity.mean(), prog_bar=True)
         return total_loss
 
     def configure_optimizers(self):
