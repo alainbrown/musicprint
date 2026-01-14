@@ -50,15 +50,14 @@ def convert_to_flac(args):
     except Exception as e:
         return f"exception: {str(e)}"
 
-def preprocess_dataset(data_dir, workers=None):
+def preprocess_dataset(data_dir, output_dir, workers=None):
     """
-    Main driver to convert entire folder tree to FLAC.
+    Main driver to convert entire folder tree to FLAC in a separate directory.
     """
     if workers is None:
-        workers = max(1, cpu_count() - 2) # Leave some cores for system
+        workers = max(1, cpu_count() - 2)
         
     print(f"Scanning {data_dir} for audio files...")
-    # Find all MP3, WAV, M4A
     extensions = ['*.mp3', '*.wav', '*.m4a', '*.aac']
     files = []
     for ext in extensions:
@@ -66,21 +65,22 @@ def preprocess_dataset(data_dir, workers=None):
         
     tasks = []
     for f in files:
-        # Construct output path: replace extension with .flac
-        p = Path(f)
-        output_path = p.with_suffix('.flac')
+        # Construct mirrored output path
+        rel_path = os.path.relpath(f, data_dir)
+        output_path = os.path.join(output_dir, os.path.splitext(rel_path)[0] + '.flac')
         
-        # Add to task list
-        tasks.append((str(p), str(output_path), "error"))
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
-    print(f"Found {len(tasks)} candidates. Starting conversion with {workers} workers...")
+        tasks.append((f, output_path, "error"))
+        
+    print(f"Found {len(tasks)} candidates. Starting conversion to {output_dir} with {workers} workers...")
     
     success_count = 0
     skip_count = 0
     error_count = 0
     
     with Pool(workers) as pool:
-        # Use tqdm for progress bar
         for result in tqdm(pool.imap_unordered(convert_to_flac, tasks), total=len(tasks)):
             if result == "success":
                 success_count += 1
@@ -88,8 +88,6 @@ def preprocess_dataset(data_dir, workers=None):
                 skip_count += 1
             else:
                 error_count += 1
-                # Optional: Print errors immediately?
-                # print(result)
                 
     print(f"\nProcessing Complete.")
     print(f"✅ Converted: {success_count}")
@@ -98,8 +96,9 @@ def preprocess_dataset(data_dir, workers=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="/vol/data")
+    parser.add_argument("--data_dir", type=str, default="/vol/src_music")
+    parser.add_argument("--output_dir", type=str, default="/vol/data")
     parser.add_argument("--workers", type=int, default=None)
     args = parser.parse_args()
     
-    preprocess_dataset(args.data_dir, args.workers)
+    preprocess_dataset(args.data_dir, args.output_dir, args.workers)

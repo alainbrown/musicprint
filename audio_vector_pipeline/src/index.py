@@ -1,7 +1,7 @@
 import argparse
 import pytorch_lightning as pl
 from system import MusicPrintSystem
-from datamodule import MusicDataModule
+from data.module import MusicDataModule
 from writer import IndexWriter
 import torch
 

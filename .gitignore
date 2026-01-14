@@ -10,6 +10,7 @@ Thumbs.db
 audio_vector_pipeline/data/
 **/cache/
 **/checkpoints/
+music/
 
 # Generated Artifacts (Large)
 **/release/*.bin

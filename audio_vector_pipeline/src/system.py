@@ -22,16 +22,25 @@ class MusicPrintSystem(pl.LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        # DALI output: [{'audio': tensor, 'label': tensor}]
-        # Lightning auto-moves batch to GPU, but DALI already puts it there.
-        # We just need to unpack.
-        
-        # NOTE: When using DALI iterator, the batch is a list of dicts
+        # Handle Dual View output from DALI
         data_dict = batch[0]
-        audio = data_dict["audio"] # (B, Time, 1)
-        labels = data_dict["label"].squeeze().long() # (B,)
         
-        # Squeeze channel dim
+        if "audio_1" in data_dict:
+            # Dual view mode (Contrastive)
+            a1 = data_dict["audio_1"]
+            a2 = data_dict["audio_2"]
+            labels = data_dict["label"].squeeze().long()
+            
+            # Concatenate views: [B, T] + [B, T] -> [2*B, T]
+            audio = torch.cat([a1, a2], dim=0)
+            # Replicate labels: [B] -> [2*B]
+            labels = torch.cat([labels, labels], dim=0)
+        else:
+            # Fallback for single view
+            audio = data_dict["audio"]
+            labels = data_dict["label"].squeeze().long()
+        
+        # Squeeze channel dim if present [B, T, 1] -> [B, T]
         if audio.dim() == 3:
             audio = audio.squeeze(-1)
             

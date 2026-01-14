@@ -14,7 +14,8 @@ services:
       - ./src:/app/src
       - ./notebooks:/app/notebooks
       - ./release:/vol/release # Bind mount for accessible artifacts
-      - musicprint_audio_data:/vol/data
+      - ../music:/vol/src_music:ro
+      - musicprint_audio_processed:/vol/data
       - musicprint_audio_logs:/vol/logs
       - musicprint_audio_checkpoints:/vol/checkpoints
       - musicprint_audio_cache:/vol/cache
@@ -34,7 +35,7 @@ services:
     command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='musicprint'
 
 volumes:
-  musicprint_audio_data:
+  musicprint_audio_processed:
   musicprint_audio_logs:
   musicprint_audio_checkpoints:
   musicprint_audio_cache:

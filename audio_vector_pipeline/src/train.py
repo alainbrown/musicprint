@@ -3,7 +3,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 from system import MusicPrintSystem
-from datamodule import MusicDataModule
+from data.module import MusicDataModule
 import torch
 
 def main(args):
@@ -50,14 +50,17 @@ def main(args):
 
     # 6. Train
     print(f"Starting training on {trainer.num_devices} GPUs with strategy {trainer.strategy}")
-    trainer.fit(system, datamodule=dm)
+    if args.resume_checkpoint:
+        print(f"Resuming from checkpoint: {args.resume_checkpoint}")
+        
+    trainer.fit(system, datamodule=dm, ckpt_path=args.resume_checkpoint)
 
 def train(args):
     """
     Main training entry point.
     args: Namespace or object with attributes:
         data_dir, checkpoint_dir, epochs, batch_size, lr, 
-        auto_batch_size, accelerator, strategy
+        auto_batch_size, accelerator, strategy, resume_checkpoint
     """
     main(args)
 
@@ -71,6 +74,7 @@ if __name__ == "__main__":
     parser.add_argument("--auto_batch_size", action="store_true", help="Auto-tune batch size to fit VRAM")
     parser.add_argument("--accelerator", type=str, default="auto")
     parser.add_argument("--strategy", type=str, default="auto")
+    parser.add_argument("--resume_checkpoint", type=str, default=None, help="Path to .ckpt file to resume training from")
     
     args = parser.parse_args()
     train(args)
