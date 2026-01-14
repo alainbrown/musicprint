@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir \
     wandb \
     faiss-gpu \
     scipy \
-    librosa
+    librosa \
+    datasets
 
 WORKDIR /app
 

@@ -34,32 +34,48 @@ DATA_DIR = "/vol/data/test_samples_processed"
 os.makedirs(SRC_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
+from datasets import load_dataset
 import scipy.io.wavfile
 
-def generate_samples():
-    print("Generating synthetic samples...")
-    # Generate 10 dummy files
-    for i in range(10):
-        # 10 seconds of random noise at 44.1kHz
-        sr = 44100
-        duration = 10
-        # Int16 range
-        audio = np.random.randint(-32768, 32767, size=sr*duration, dtype=np.int16)
+import shutil
+
+import io
+import soundfile as sf
+
+def download_gtzan_samples():
+    print("Fetching MINDS14 dataset (14 clips)...")
+    try:
+        # Load without automatic decoding to bypass torchcodec issues
+        ds = load_dataset("PolyAI/minds14", name="en-US", split="train[:14]").cast_column("audio", Audio(decode=False))
         
-        fname = f"synthetic_{i:03d}.wav"
-        target = os.path.join(SRC_DIR, fname)
-        
-        if not os.path.exists(target):
+        if len(ds) == 0:
+            raise ValueError("Dataset is empty!")
+
+        for i, item in enumerate(ds):
+            # item['audio'] now contains {'path': ..., 'bytes': ...}
+            audio_bytes = item['audio']['bytes']
+            
+            # Manually decode using soundfile
+            with io.BytesIO(audio_bytes) as f:
+                audio, sr = sf.read(f)
+            
+            # Save as WAV
+            target = os.path.join(SRC_DIR, f"minds_{i:03d}.wav")
             scipy.io.wavfile.write(target, sr, audio)
             
-    print("Synthetic samples created.")
-    
-    # Run Normalization (WAV -> FLAC)
-    print("\nRunning Audio Normalization (WAV -> FLAC)...")
+        print("✅ 14 Real Samples Manually Decoded.")
+    except Exception as e:
+        print(f"❌ Failed to fetch dataset: {e}")
+        raise e
+
+    # Run Normalization
+    print("\nRunning Audio Normalization...")
     preprocess_dataset(SRC_DIR, DATA_DIR)
 
-generate_samples()
-download_noise() 
+# Add Audio to imports from datasets
+from datasets import load_dataset, Audio
+
+download_gtzan_samples() 
 
 # %% [markdown]
 # ## 1. Verify ISRC Bitpacking
@@ -79,7 +95,7 @@ for original in test_isrcs:
 
 # %%
 print("Initializing Data Module...")
-dm = MusicDataModule(data_dir=DATA_DIR, batch_size=2, val_split=0.2, window_secs=5.0)
+dm = MusicDataModule(data_dir=DATA_DIR, batch_size=2, val_split=0.0, window_secs=5.0)
 train_loader = dm.train_dataloader()
 
 batch = next(iter(train_loader))
@@ -124,7 +140,8 @@ trainer = pl.Trainer(
     devices=1,
     max_epochs=2,
     enable_checkpointing=False,
-    precision=32
+    precision=32,
+    limit_val_batches=0
 )
 
 try:

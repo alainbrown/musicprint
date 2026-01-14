@@ -16,8 +16,9 @@ class SupervisedContrastiveLoss(nn.Module):
         device = features.device
         batch_size = features.shape[0]
         
-        # 1. Normalize features
-        features = F.normalize(features, p=2, dim=1)
+        # 1. Normalize features robustly
+        norm = torch.norm(features, p=2, dim=1, keepdim=True)
+        features = features / (norm + 1e-7)
         
         # 2. Similarity matrix
         logits = torch.div(torch.matmul(features, features.T), self.temperature)
