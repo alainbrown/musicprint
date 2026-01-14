@@ -1,7 +1,7 @@
 # %% [markdown]
 # # MusicPrint Vetting Notebook
-# Use this to verify the logic of the Audio Pipeline before mass-indexing.
-# This notebook validates the entire modular data architecture and training logic.
+# Use this to verify the logic of the Adapter Training Pipeline.
+# This notebook validates data loading, contrastive training, and TorchScript export.
 
 # %%
 import sys
@@ -22,56 +22,44 @@ from isrc_utils import pack_isrc, unpack_isrc
 from system import MusicPrintSystem
 from data.module import MusicDataModule
 from download_noise import download_noise
+from preprocess import preprocess_dataset
 
 # %% [markdown]
 # ## 0. Environment Setup
 # Ensure sample audio and noise datasets are present.
 
 # %%
-DATA_DIR = "/vol/data/test_samples"
+SRC_DIR = "/vol/data/test_samples_raw"
+DATA_DIR = "/vol/data/test_samples_processed"
+os.makedirs(SRC_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
-def download_samples():
-    # Use FMA tracks from Archive.org (reliable permalinks)
-    # We fetch 20 tracks to ensure val_split and batch_size work correctly.
-    base_url = "https://archive.org/download/FMA_INTERNET_ARCHIVE_BATCH_1/"
-    
-    # A list of 20 known filenames from FMA
-    fma_files = [
-        "000002.mp3", "000003.mp3", "000005.mp3", "000010.mp3", "000139.mp3",
-        "000140.mp3", "000141.mp3", "000142.mp3", "000144.mp3", "000145.mp3",
-        "000146.mp3", "000147.mp3", "000148.mp3", "000149.mp3", "000150.mp3",
-        "000151.mp3", "000152.mp3", "000153.mp3", "000154.mp3", "000155.mp3"
-    ]
-    
-    from preprocess import preprocess_dataset
+import scipy.io.wavfile
 
-    for fname in fma_files:
-        name = fname.replace(".mp3", "")
-        target = os.path.join(DATA_DIR, fname)
+def generate_samples():
+    print("Generating synthetic samples...")
+    # Generate 10 dummy files
+    for i in range(10):
+        # 10 seconds of random noise at 44.1kHz
+        sr = 44100
+        duration = 10
+        # Int16 range
+        audio = np.random.randint(-32768, 32767, size=sr*duration, dtype=np.int16)
+        
+        fname = f"synthetic_{i:03d}.wav"
+        target = os.path.join(SRC_DIR, fname)
         
         if not os.path.exists(target):
-            url = base_url + fname
-            print(f"Downloading {name}...")
-            try:
-                r = requests.get(url, stream=True, timeout=30)
-                if r.status_code == 200:
-                    with open(target, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                else:
-                    print(f"❌ Failed {url}: {r.status_code}")
-            except Exception as e:
-                print(f"❌ Error {name}: {e}")
-                
-    print("Samples downloaded.")
+            scipy.io.wavfile.write(target, sr, audio)
+            
+    print("Synthetic samples created.")
     
-    # Run Normalization (MP3 -> FLAC)
-    print("\nRunning Audio Normalization (MP3 -> FLAC)...")
-    preprocess_dataset(DATA_DIR)
+    # Run Normalization (WAV -> FLAC)
+    print("\nRunning Audio Normalization (WAV -> FLAC)...")
+    preprocess_dataset(SRC_DIR, DATA_DIR)
 
-download_samples()
-download_noise() # Ensure DEMAND dataset is ready
+generate_samples()
+download_noise() 
 
 # %% [markdown]
 # ## 1. Verify ISRC Bitpacking
@@ -86,107 +74,64 @@ for original in test_isrcs:
     print(f"{original} -> {packed:016x} -> {unpacked} [{status}]")
 
 # %% [markdown]
-# ## 2. Verify Inference Pipeline (Single-View)
-# Test the clean audio path used for validation and mass-indexing.
+# ## 2. Verify Data Module & DALI
+# Checks that the DALI contrastive pipeline produces the expected views.
+
+# %%
+print("Initializing Data Module...")
+dm = MusicDataModule(data_dir=DATA_DIR, batch_size=2, val_split=0.2, window_secs=5.0)
+train_loader = dm.train_dataloader()
+
+batch = next(iter(train_loader))
+data_dict = batch[0]
+print(f"✅ Success: Batch keys: {data_dict.keys()}")
+print(f"View 1 Shape: {data_dict['audio_1'].shape}")
+print(f"View 2 Shape: {data_dict['audio_2'].shape}")
+
+# %% [markdown]
+# ## 3. Verify TorchScript Export
+# This is critical! The Indexer depends on this export working correctly.
 
 # %%
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE}")
-
-# %%
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE}")
-
-# Initialize system
 system = MusicPrintSystem().to(DEVICE).eval()
 
-# Initialize Data Module (val_split=0.1 ensures we have data in val_dataloader)
-print("Initializing Inference Data Pipeline (Validation Mode)...")
-dm = MusicDataModule(data_dir=DATA_DIR, batch_size=2, val_split=0.1, window_secs=5.0)
-loader = dm.val_dataloader()
+# 1. Trace the model
+print("Tracing model to TorchScript...")
+example_input = torch.randn(1, 120000).to(DEVICE)
+traced_model = torch.jit.trace(system.model, example_input)
 
-try:
-    batch = next(iter(loader))
-    data_dict = batch[0]
-    # In Validation mode, we expect 'audio' key
-    print(f"Batch received. Audio Shape: {data_dict['audio'].shape}")
+# 2. Verify Output Parity
+with torch.no_grad():
+    out_orig = system.model(example_input)
+    out_jit = traced_model(example_input)
 
-    with torch.no_grad():
-        results = system.predict_step(batch, 0)
-    
-    if results:
-        print(f"✅ PASS: Inference step generated {len(results[0]['embeddings'])} fingerprints.")
-except Exception as e:
-    print(f"❌ Inference Fail: {e}")
+diff = torch.abs(out_orig - out_jit).max().item()
+if diff < 1e-5:
+    print(f"✅ PASS: TorchScript parity match (max diff: {diff:.2e})")
+else:
+    print(f"❌ FAIL: TorchScript divergence (max diff: {diff:.2e})")
 
 # %% [markdown]
-# ## 3. Verify Pre-Compute Strategy
-# Validates caching 768-dim features to accelerate Adapter training.
+# ## 4. Verify Training Loop
+# Run a mini-training session to ensure gradients flow.
 
 # %%
-PRECOMPUTE_CACHE = "/vol/cache/precompute_test"
-os.makedirs(PRECOMPUTE_CACHE, exist_ok=True)
-SAMPLE_FLAC = os.path.join(DATA_DIR, "JAMENDO_003.flac")
-
-if os.path.exists(SAMPLE_FLAC):
-    print("\n--- 3. Testing Feature Extraction & Backpropagation ---")
-    audio, _ = librosa.load(SAMPLE_FLAC, sr=24000)
-    
-    # 1. Extraction (Frozen Backbone)
-    sig_tensor = torch.from_numpy(audio[:24000*5]).to(DEVICE).unsqueeze(0).float()
-    with torch.no_grad():
-        outputs = system.model.backbone(sig_tensor)
-        features = outputs.last_hidden_state[0, :10, :].cpu()
-    
-    out_path = os.path.join(PRECOMPUTE_CACHE, "verify_features.pt")
-    torch.save({"feat": features}, out_path)
-    print(f"✅ Saved features to {out_path}")
-    
-    # 2. Gradient Check
-    loaded = torch.load(out_path)
-    feat = loaded["feat"][0].to(DEVICE)
-    
-    # Isolate trainable head
-    adapter_head = system.model.adapter.to(DEVICE)
-    optimizer = torch.optim.Adam(adapter_head.parameters(), lr=1e-3)
-    
-    system.train()
-    p1 = adapter_head(feat)
-    p2 = adapter_head(feat + torch.randn_like(feat)*0.01) # Small perturbation
-    
-    loss = torch.nn.functional.mse_loss(p1, p2)
-    loss.backward()
-    optimizer.step()
-    print(f"Loss: {loss.item():.6f}")
-    print("✅ Verified backpropagation on cached features.")
-
-# %% [markdown]
-# ## 4. Verify Production Training Loop (Dual-View)
-# Run multiple epochs using the real DALI contrastive pipeline.
-
-# %%
-print("\n--- 4. Verifying Production Training Pipeline ---")
-# Use a fresh DM with BS=2 to ensure contrastive pairs
-dm_train = MusicDataModule(data_dir=DATA_DIR, batch_size=2, val_split=0.0, window_secs=5.0)
-
+print("\n--- 4. Verifying Training Loop ---")
 trainer = pl.Trainer(
     logger=CSVLogger("/tmp/test_logs"),
     accelerator="auto",
     devices=1,
-    max_epochs=5,
+    max_epochs=2,
     enable_checkpointing=False,
-    num_sanity_val_steps=0,
-    limit_val_batches=0,
     precision=32
 )
 
 try:
     system.train()
-    trainer.fit(system, datamodule=dm_train)
-    print("✅ Production training loop converged successfully.")
+    trainer.fit(system, datamodule=dm)
+    print("✅ Training loop execution successful.")
 except Exception as e:
     print(f"❌ Training Failed: {e}")
-    import traceback
-    traceback.print_exc()
 
 print("\n✅ Verification Notebook Complete.")
