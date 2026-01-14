@@ -42,6 +42,13 @@ def export_to_coreml(args):
 
     # 6. Save
     os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Save TorchScript for the Indexer
+    pt_path = os.path.join(args.output_dir, "encoder.pt")
+    traced_model.save(pt_path)
+    print(f"✅ Saved TorchScript model to: {pt_path}")
+
+    # Save CoreML for the App
     output_path = os.path.join(args.output_dir, "MusicPrintEncoder.mlpackage")
     mlmodel.save(output_path)
     

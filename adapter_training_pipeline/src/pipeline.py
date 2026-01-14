@@ -7,33 +7,24 @@ from pathlib import Path
 from download_noise import download_noise
 from preprocess import preprocess_dataset
 from train import train
-from index import index
 from export import export
 
 def run_pipeline(args):
     print("="*60)
-    print("🎹 MUSICPRINT AUDIO VECTOR PIPELINE")
+    print("🎹 ADAPTER TRAINING PIPELINE")
     print("="*60)
 
     # --- Step 1: Dependencies ---
-    print("\n[1/5] Checking Dependencies...")
+    print("\n[1/4] Checking Dependencies...")
     download_noise()
 
     # --- Step 2: Preprocessing ---
-    print("\n[2/5] Preprocessing Audio (MP3 -> FLAC)...")
+    print("\n[2/4] Preprocessing Audio (MP3 -> FLAC)...")
     # We mirror source to data volume
     preprocess_dataset(data_dir=args.source_dir, output_dir=args.data_dir, workers=args.workers)
 
     # --- Step 3: Training ---
-    print("\n[3/5] Training Model...")
-    
-    # Check for existing checkpoint to resume
-    resume_ckpt = None
-    last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
-    if os.path.exists(last_ckpt_path):
-        print(f"🔄 Resuming from last checkpoint: {last_ckpt_path}")
-        resume_ckpt = last_ckpt_path
-    
+    print("\n[3/4] Training Model...")
     # Prepare arguments for the training module
     train_args = argparse.Namespace(
         data_dir=args.data_dir,
@@ -44,15 +35,19 @@ def run_pipeline(args):
         auto_batch_size=args.auto_batch_size,
         accelerator="gpu",
         strategy="auto",
-        resume_checkpoint=resume_ckpt
+        resume_checkpoint=None
     )
+    
+    # Check for existing checkpoint to resume
+    last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
+    if os.path.exists(last_ckpt_path):
+        print(f"🔄 Resuming from last checkpoint: {last_ckpt_path}")
+        train_args.resume_checkpoint = last_ckpt_path
+
     train(train_args)
 
-    # --- Step 4: Locate Best Model ---
-    print("\n[4/5] Identifying Best Model...")
-    # Find the latest checkpoint saved by Lightning
-    # Lightning saves as "name-epoch=XX-val_loss=YY.ckpt"
-    # We sort by modification time to get the last one, or by name parsing if needed
+    # --- Step 4: Locate Best Model & Export ---
+    print("\n[4/4] Identifying Best Model & Exporting...")
     checkpoints = sorted(glob.glob(os.path.join(args.checkpoint_dir, "*.ckpt")), key=os.path.getmtime)
     
     if not checkpoints:
@@ -60,19 +55,6 @@ def run_pipeline(args):
     
     best_ckpt = checkpoints[-1]
     print(f"🏆 Best Checkpoint: {best_ckpt}")
-
-    # --- Step 5: Indexing & Export ---
-    print(f"\n[5/5] Indexing and Exporting...")
-    
-    # Run Indexing
-    index_args = argparse.Namespace(
-        checkpoint_path=best_ckpt,
-        pq_path=None, # Optional PQ training could be added here
-        data_dir=args.data_dir,
-        output_dir=args.index_dir,
-        batch_size=16 # Inference batch size
-    )
-    index(index_args)
 
     # Run Export
     export_args = argparse.Namespace(
@@ -82,10 +64,10 @@ def run_pipeline(args):
     export(export_args)
 
     print("\n" + "="*60)
-    print(f"✅ PIPELINE COMPLETE")
-    print(f"🔹 Model: {best_ckpt}")
+    print(f"✅ TRAINING COMPLETE")
+    print(f"🔹 Checkpoint: {best_ckpt}")
+    print(f"🔹 TorchScript: {os.path.join(args.release_dir, 'encoder.pt')}")
     print(f"🔹 CoreML: {os.path.join(args.release_dir, 'MusicPrintEncoder.mlpackage')}")
-    print(f"🔹 Index: {args.index_dir}")
     print("="*60)
 
 if __name__ == "__main__":

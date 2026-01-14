@@ -1,0 +1,32 @@
+services:
+  index-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: musicprint-index:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ./src:/app/src
+      # Mount the release folder from the training pipeline to access the model
+      - ../adapter_training_pipeline/release:/vol/model:ro
+      - ../music:/vol/src_music:ro
+      - musicprint_index_processed:/vol/data
+      - musicprint_index_cache:/vol/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: '4gb'
+    stdin_open: true
+    tty: true
+    command: python src/pipeline.py --model_path /vol/model/encoder.pt
+
+volumes:
+  musicprint_index_processed:
+  musicprint_index_cache:

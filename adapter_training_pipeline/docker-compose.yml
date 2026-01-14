@@ -1,24 +1,24 @@
 services:
-  pipeline:
+  training-pipeline:
     build:
       context: .
       dockerfile: Dockerfile
-    image: musicprint-pipeline:latest
+    image: musicprint-training:latest
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - HF_HOME=/vol/cache/huggingface
-      - JUPYTER_TOKEN=musicprint  # Security token for easy login
+      - JUPYTER_TOKEN=musicprint
     volumes:
       - ./src:/app/src
       - ./notebooks:/app/notebooks
-      - ./release:/vol/release # Bind mount for accessible artifacts
+      - ./release:/vol/release
       - ../music:/vol/src_music:ro
-      - musicprint_audio_processed:/vol/data
-      - musicprint_audio_logs:/vol/logs
-      - musicprint_audio_checkpoints:/vol/checkpoints
-      - musicprint_audio_cache:/vol/cache
+      - musicprint_training_processed:/vol/data
+      - musicprint_training_logs:/vol/logs
+      - musicprint_training_checkpoints:/vol/checkpoints
+      - musicprint_training_cache:/vol/cache
     ports:
       - "8888:8888"
     deploy:
@@ -31,11 +31,10 @@ services:
     shm_size: '8gb'
     stdin_open: true
     tty: true
-    # Launch Jupyter Lab by default
     command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='musicprint'
 
 volumes:
-  musicprint_audio_processed:
-  musicprint_audio_logs:
-  musicprint_audio_checkpoints:
-  musicprint_audio_cache:
+  musicprint_training_processed:
+  musicprint_training_logs:
+  musicprint_training_checkpoints:
+  musicprint_training_cache:
