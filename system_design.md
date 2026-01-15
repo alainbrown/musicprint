@@ -130,15 +130,20 @@ This ensures parity between the training (PyTorch) and inference (C++) environme
 
 ## 4. Development & Scaling Strategy
 
-### A. The Two-Stage Trainer
-The pipeline now requires two distinct training phases before indexing:
+### A. The Split Pipeline Architecture
+To ensure stability and separation of concerns, the system uses a **Shared-Nothing** architecture split into two independent pipelines.
 
-1.  **Audio Codebook Trainer:**
-    *   Input: 1M MERT vectors.
-    *   Output: PQ Centroids (for audio compression).
-2.  **Text Codebook Trainer:**
-    *   Input: 10M Song Titles.
-    *   Output: BPE Vocabulary (for text compression).
+1.  **`adapter_training_pipeline` (The Teacher):**
+    *   **Goal:** Learn the "Musical Fingerprint" function.
+    *   **Method:** Trains a MERT Adapter using **ArcFace Loss** on a labeled dataset.
+    *   **Artifact:** Exports a frozen TorchScript model (`encoder.pt`) and CoreML package.
+    *   **No Shared Code:** Does not know about indexing or search.
+
+2.  **`vector_index_pipeline` (The Librarian):**
+    *   **Goal:** Build the search database.
+    *   **Method:** Consumes `encoder.pt` as a black box to inference millions of songs.
+    *   **Artifact:** Binary index files (`index.bin`).
+    *   **Scalability:** Can run on separate hardware (CPU clusters) using the frozen model.
 
 ### B. Incremental Rollout (Production)
 Scaling from 1 to 100 million tracks will be done in phases.
@@ -156,13 +161,13 @@ Scaling from 1 to 100 million tracks will be done in phases.
 
 ### A. Development (Cloud/Vast.ai)
 *   **Language:** Python 3.10+
-*   **Audio/ML:** **PyTorch Lightning** + **Faiss** (for training PQ centroids and VQ-VAE).
+*   **Audio/ML:** **PyTorch Lightning** + **ArcFace** (Metric Learning).
 *   **Tokenizer:** **HuggingFace Tokenizers** (Rust-based BPE).
-*   **Data Processing:** **NVIDIA DALI**.
+*   **Data Processing:** **NVIDIA DALI** (GPU-accelerated Loading).
 
 ### B. Deployment (iPhone 13+)
 *   **Interface:** **Swift / SwiftUI**.
-*   **Neural Inference:** **CoreML** (MERT).
+*   **Neural Inference:** **CoreML** (MERT Adapter).
 *   **Search Engine:** **Custom C++ Searcher**.
     *   Implements Asymmetric Distance Calculation (ADC) for PQ.
     *   Implements BPE Decoder for text.

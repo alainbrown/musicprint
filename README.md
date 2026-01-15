@@ -17,44 +17,43 @@ The system is composed of a symmetrical **Encoder-Database-Decoder** pipeline:
 
 ## 📂 Repository Structure
 
-*   **`audio_vector_pipeline/`**: PyTorch Lightning pipeline for training the MERT adapter and PQ codebooks. Uses NVIDIA DALI for high-performance ingestion.
-*   **`libmusicprint/`**: High-performance C++ library for loading the index and performing search. (Targeting iOS/CoreML).
-*   **`meta_tokenizer_pipeline/`**: NLP pipeline for training BPE tokenizers to compress song metadata (Artist/Title).
-*   **`album_art_tokenizer_pipeline/`**: (In Progress) VQ-VAE pipeline for compressing album artwork.
+*   **`adapter_training_pipeline/`**: The "Teacher". Trains the MERT adapter using **ArcFace Loss** to create robust acoustic fingerprints. Exports `encoder.pt` (TorchScript) and `MusicPrintEncoder.mlpackage` (CoreML).
+*   **`vector_index_pipeline/`**: The "Librarian". Consumes the frozen `encoder.pt` model to index millions of songs into a compressed binary format. **Zero shared code** with the training pipeline.
+*   **`libmusicprint/`**: High-performance C++ library for loading the index and performing search on iOS.
+*   **`meta_tokenizer_pipeline/`**: NLP pipeline for training BPE tokenizers to compress song metadata.
 *   **`tests/`**: End-to-End smoke tests and verification scripts.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 *   **Docker** & **Docker Compose**
-*   **NVIDIA GPU** + **NVIDIA Container Toolkit** (Required for training/indexing)
-
-### Running the End-to-End Smoke Test
-The easiest way to verify the system is to run the containerized smoke test. This orchestrates the full lifecycle:
-1.  Ingests a sample audio file.
-2.  Trains the MERT adapter and PQ codebook.
-3.  Builds a binary index.
-4.  Compiles the C++ searcher and runs a query.
-
-```bash
-# Run the full E2E pipeline (requires GPU)
-docker compose -f docker-compose.test.yml up --build
-```
+*   **NVIDIA GPU** (Required for training/indexing)
 
 ### Manual Development
 
-**1. Audio Pipeline (Python/PyTorch)**
+**1. Train the Adapter (ArcFace)**
 ```bash
-cd audio_vector_pipeline
-docker compose up -d # Starts JupyterLab & Training container
+cd adapter_training_pipeline
+docker compose up --build -d
+docker compose exec training-pipeline python src/pipeline.py
 ```
+*Output: `release/encoder.pt`, `release/MusicPrintEncoder.mlpackage`*
 
-**2. Core Library (C++)**
+**2. Build the Index**
+```bash
+cd vector_index_pipeline
+docker compose up --build -d
+# Mounts the model from the training pipeline automatically
+docker compose exec index-pipeline python src/pipeline.py --model_path /vol/model/encoder.pt
+```
+*Output: `cache/index/*.bin`*
+
+**3. Core Library (C++)**
 ```bash
 cd libmusicprint
 mkdir build && cd build
 cmake .. && make
-./cli_search <query.bin> <index.bin> <centroids.bin> ...
+./cli_search <query.bin> <index.bin> ...
 ```
 
 ## 🛠 Technology Stack
