@@ -63,9 +63,9 @@ def main(args):
     
     # 4. Init Trainer
     trainer = pl.Trainer(
-        accelerator="gpu",
+        accelerator=args.accelerator,
         devices=1,
-        precision="bf16-mixed",
+        precision=args.precision,
         callbacks=[writer]
     )
     
@@ -82,6 +82,8 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, default="/vol/data")
     parser.add_argument("--output_dir", type=str, default="/vol/cache/index")
     parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--accelerator", type=str, default="gpu")
+    parser.add_argument("--precision", type=str, default="bf16-mixed")
     
     args = parser.parse_args()
     index(args)

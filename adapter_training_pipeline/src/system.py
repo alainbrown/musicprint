@@ -50,9 +50,13 @@ class MusicPrintSystem(pl.LightningModule):
         # Validation is similar, but we might just use one view
         # Or use both to get better loss estimate
         data_dict = batch[0]
-        audio = data_dict["audio_1"] # Use audio_1 if available, or just audio
+        
         if "audio" in data_dict:
             audio = data_dict["audio"]
+        elif "audio_1" in data_dict:
+            audio = data_dict["audio_1"]
+        else:
+            raise KeyError(f"Batch keys {data_dict.keys()} do not contain 'audio' or 'audio_1'")
             
         labels = data_dict["label"].squeeze().long()
         

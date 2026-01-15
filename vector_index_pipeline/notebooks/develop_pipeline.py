@@ -1,192 +1,154 @@
 # %% [markdown]
-# # MusicPrint Vetting Notebook
-# Use this to verify the logic of the Audio Pipeline before mass-indexing.
-# This notebook validates the entire modular data architecture and training logic.
+# # MusicPrint Indexing Pipeline Vetting
+# Validates the inference and indexing workflow using a frozen TorchScript model.
 
-# %%
+# %% 
 import sys
 import os
 import torch
 import numpy as np
-import requests
-from tqdm import tqdm
-import torch.nn as nn
-import librosa
-import pytorch_lightning as pl
-from pytorch_lightning.loggers import CSVLogger
+import scipy.io.wavfile
+import shutil
+import io
+import soundfile as sf
+from datasets import load_dataset, Audio
 
 # Add src to path
 sys.path.append(os.path.join(os.getcwd(), '../src'))
 
-from isrc_utils import pack_isrc, unpack_isrc
-from system import MusicPrintSystem
 from data.module import MusicDataModule
-from download_noise import download_noise
+from index import main as run_index
+import argparse
 
 # %% [markdown]
 # ## 0. Environment Setup
-# Ensure sample audio and noise datasets are present.
+# Generate synthetic test data (10 songs)
 
-# %%
-DATA_DIR = "/vol/data/test_samples"
+# %% 
+SRC_DIR = "/vol/data/test_samples_raw"
+DATA_DIR = "/vol/data/test_samples_processed"
+MODEL_DIR = "/vol/data/test_models"
+INDEX_DIR = "/vol/data/test_index"
+
+os.makedirs(SRC_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(MODEL_DIR, exist_ok=True)
+os.makedirs(INDEX_DIR, exist_ok=True)
 
-def download_samples():
-    # Use FMA tracks from Archive.org (reliable permalinks)
-    # We fetch 20 tracks to ensure val_split and batch_size work correctly.
-    base_url = "https://archive.org/download/FMA_INTERNET_ARCHIVE_BATCH_1/"
-    
-    # A list of 20 known filenames from FMA
-    fma_files = [
-        "000002.mp3", "000003.mp3", "000005.mp3", "000010.mp3", "000139.mp3",
-        "000140.mp3", "000141.mp3", "000142.mp3", "000144.mp3", "000145.mp3",
-        "000146.mp3", "000147.mp3", "000148.mp3", "000149.mp3", "000150.mp3",
-        "000151.mp3", "000152.mp3", "000153.mp3", "000154.mp3", "000155.mp3"
-    ]
-    
-    from preprocess import preprocess_dataset
+from preprocess import preprocess_dataset
 
-    for fname in fma_files:
-        name = fname.replace(".mp3", "")
-        target = os.path.join(DATA_DIR, fname)
+def setup_data():
+    print("Fetching MINDS14 dataset (14 clips)...")
+    try:
+        ds = load_dataset("PolyAI/minds14", name="en-US", split="train[:14]").cast_column("audio", Audio(decode=False))
         
-        if not os.path.exists(target):
-            url = base_url + fname
-            print(f"Downloading {name}...")
-            try:
-                r = requests.get(url, stream=True, timeout=30)
-                if r.status_code == 200:
-                    with open(target, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                else:
-                    print(f"❌ Failed {url}: {r.status_code}")
-            except Exception as e:
-                print(f"❌ Error {name}: {e}")
-                
-    print("Samples downloaded.")
-    
-    # Run Normalization (MP3 -> FLAC)
-    print("\nRunning Audio Normalization (MP3 -> FLAC)...")
-    preprocess_dataset(DATA_DIR)
+        for i, item in enumerate(ds):
+            audio_bytes = item['audio']['bytes']
+            with io.BytesIO(audio_bytes) as f:
+                audio, sr = sf.read(f)
+            target = os.path.join(SRC_DIR, f"minds_{i:03d}.wav")
+            scipy.io.wavfile.write(target, sr, audio)
+            
+        print("✅ Real Samples Ready.")
+    except Exception as e:
+        print(f"❌ Failed: {e}")
+        return
 
-download_samples()
-download_noise() # Ensure DEMAND dataset is ready
+    print("\nRunning Audio Normalization...")
+    preprocess_dataset(SRC_DIR, DATA_DIR)
+
+setup_data()
 
 # %% [markdown]
-# ## 1. Verify ISRC Bitpacking
-# Ensure we can round-trip ISRCs without data loss.
+# ## 1. Create Dummy TorchScript Model
+# We need a model to run inference. We'll create a simple one that mimics MERT input/output.
 
-# %%
-test_isrcs = ["USRC11234567", "GBAYL1200001", "FR6V81234567"]
-for original in test_isrcs:
-    packed = pack_isrc(original)
-    unpacked = unpack_isrc(packed)
-    status = "PASS" if original == unpacked else "FAIL"
-    print(f"{original} -> {packed:016x} -> {unpacked} [{status}]")
+# %% 
+class DummyMERT(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.head = torch.nn.Linear(10, 64) # Dummy head
+        
+    def forward(self, x):
+        # x is (Batch, Time)
+        # We just do a mean pool to fake embedding
+        return torch.randn(x.shape[0], 64).to(x.device)
 
-# %% [markdown]
-# ## 2. Verify Inference Pipeline (Single-View)
-# Test the clean audio path used for validation and mass-indexing.
-
-# %%
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE}")
-
-# %%
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE}")
-
-# Initialize system
-system = MusicPrintSystem().to(DEVICE).eval()
-
-# Initialize Data Module (val_split=0.1 ensures we have data in val_dataloader)
-print("Initializing Inference Data Pipeline (Validation Mode)...")
-dm = MusicDataModule(data_dir=DATA_DIR, batch_size=2, val_split=0.1, window_secs=5.0)
-loader = dm.val_dataloader()
-
-try:
-    batch = next(iter(loader))
-    data_dict = batch[0]
-    # In Validation mode, we expect 'audio' key
-    print(f"Batch received. Audio Shape: {data_dict['audio'].shape}")
-
-    with torch.no_grad():
-        results = system.predict_step(batch, 0)
-    
-    if results:
-        print(f"✅ PASS: Inference step generated {len(results[0]['embeddings'])} fingerprints.")
-except Exception as e:
-    print(f"❌ Inference Fail: {e}")
+model = DummyMERT().eval()
+scripted_model = torch.jit.script(model)
+model_path = os.path.join(MODEL_DIR, "encoder.pt")
+scripted_model.save(model_path)
+print(f"✅ Created dummy model at {model_path}")
 
 # %% [markdown]
-# ## 3. Verify Pre-Compute Strategy
-# Validates caching 768-dim features to accelerate Adapter training.
+# ## 2. Run Indexing Logic
+# We call the 'index' function directly to verify the loop.
 
-# %%
-PRECOMPUTE_CACHE = "/vol/cache/precompute_test"
-os.makedirs(PRECOMPUTE_CACHE, exist_ok=True)
-SAMPLE_FLAC = os.path.join(DATA_DIR, "JAMENDO_003.flac")
+# %% 
+print("Running Indexing...")
 
-if os.path.exists(SAMPLE_FLAC):
-    print("\n--- 3. Testing Feature Extraction & Backpropagation ---")
-    audio, _ = librosa.load(SAMPLE_FLAC, sr=24000)
-    
-    # 1. Extraction (Frozen Backbone)
-    sig_tensor = torch.from_numpy(audio[:24000*5]).to(DEVICE).unsqueeze(0).float()
-    with torch.no_grad():
-        outputs = system.model.backbone(sig_tensor)
-        features = outputs.last_hidden_state[0, :10, :].cpu()
-    
-    out_path = os.path.join(PRECOMPUTE_CACHE, "verify_features.pt")
-    torch.save({"feat": features}, out_path)
-    print(f"✅ Saved features to {out_path}")
-    
-    # 2. Gradient Check
-    loaded = torch.load(out_path)
-    feat = loaded["feat"][0].to(DEVICE)
-    
-    # Isolate trainable head
-    adapter_head = system.model.adapter.to(DEVICE)
-    optimizer = torch.optim.Adam(adapter_head.parameters(), lr=1e-3)
-    
-    system.train()
-    p1 = adapter_head(feat)
-    p2 = adapter_head(feat + torch.randn_like(feat)*0.01) # Small perturbation
-    
-    loss = torch.nn.functional.mse_loss(p1, p2)
-    loss.backward()
-    optimizer.step()
-    print(f"Loss: {loss.item():.6f}")
-    print("✅ Verified backpropagation on cached features.")
-
-# %% [markdown]
-# ## 4. Verify Production Training Loop (Dual-View)
-# Run multiple epochs using the real DALI contrastive pipeline.
-
-# %%
-print("\n--- 4. Verifying Production Training Pipeline ---")
-# Use a fresh DM with BS=2 to ensure contrastive pairs
-dm_train = MusicDataModule(data_dir=DATA_DIR, batch_size=2, val_split=0.0, window_secs=5.0)
-
-trainer = pl.Trainer(
-    logger=CSVLogger("/tmp/test_logs"),
-    accelerator="auto",
-    devices=1,
-    max_epochs=5,
-    enable_checkpointing=False,
-    num_sanity_val_steps=0,
-    limit_val_batches=0,
-    precision=32
+# Mock Args
+args = argparse.Namespace(
+    model_path=model_path,
+    data_dir=DATA_DIR,
+    output_dir=INDEX_DIR,
+    batch_size=4,
+    pq_path=None,
+    accelerator="cpu",
+    precision="bf16-mixed"
 )
 
 try:
-    system.train()
-    trainer.fit(system, datamodule=dm_train)
-    print("✅ Production training loop converged successfully.")
+    run_index(args)
+    print("✅ Indexing function returned successfully.")
 except Exception as e:
-    print(f"❌ Training Failed: {e}")
+    print(f"❌ Indexing Failed: {e}")
     import traceback
     traceback.print_exc()
 
-print("\n✅ Verification Notebook Complete.")
+# %% [markdown]
+# ## 3. Verify Output
+# Check if files were written.
+
+# %% 
+files = os.listdir(INDEX_DIR)
+print(f"Index Directory Contents: {files}")
+if len(files) > 0:
+    print("✅ Success: Index artifacts generated.")
+else:
+    print("❌ Fail: No artifacts found.")
+
+# %% [markdown]
+# ## 4. Test Release Model
+# Run the pipeline with the actual trained model mounted from the training pipeline.
+
+# %% 
+print("\nTesting Release Model...")
+release_model_path = "/vol/model/encoder.pt"
+
+if not os.path.exists(release_model_path):
+    print(f"⚠️ Release model not found at {release_model_path}. Skipping test.")
+else:
+    print(f"Found release model at {release_model_path}")
+    
+    # Update args to use release model
+    args.model_path = release_model_path
+    args.precision = "32" # Force float32 for CPU compatibility
+    # Use a separate output dir to not overwrite dummy test
+    args.output_dir = os.path.join(INDEX_DIR, "release_test")
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    try:
+        run_index(args)
+        print("✅ Release model indexing successful.")
+        
+        # Verify artifacts
+        files = os.listdir(args.output_dir)
+        print(f"Release Index Contents: {files}")
+        if len(files) > 0:
+            print("✅ Success: Release index artifacts generated.")
+        else:
+            print("❌ Fail: No artifacts found for release model.")
+            
+    except Exception as e:
+        print(f"❌ Release Model Failed: {e}")

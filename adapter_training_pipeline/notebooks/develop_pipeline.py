@@ -80,14 +80,14 @@ def download_gtzan_samples():
 # Add Audio to imports from datasets
 from datasets import load_dataset, Audio
 
-download_gtzan_samples() 
+download_gtzan_samples()
 
 # %% [markdown]
 # ## 1. Verify ISRC Bitpacking
 # Ensure we can round-trip ISRCs without data loss.
 
 # %%
-test_isrcs = ["USRC11234567", "GBAYL1200001", "FR6V81234567"]
+ test_isrcs = ["USRC11234567", "GBAYL1200001", "FR6V81234567"]
 for original in test_isrcs:
     packed = pack_isrc(original)
     unpacked = unpack_isrc(packed)
@@ -180,3 +180,65 @@ except Exception as e:
     traceback.print_exc()
 
 print("\n✅ Verification Notebook Complete.")
+
+# %% [markdown]
+# ## 5. Fix Remote Code Serialization
+# The 'trust_remote_code=True' model breaks TorchScript serialization due to dynamic class names.
+# We test a fix here by wrapping the model before export.
+
+# %%
+print("Testing Serialization Fix...")
+
+# Get the backbone
+backbone = system.model.backbone
+
+# HACK: Manually rename the type of the underlying Hugging Face model
+# The path is usually deeply nested in transformers_modules... 
+hf_model = backbone.backbone # This is the dynamic MERTModel
+original_class = hf_model.__class__
+
+print(f"Original Class: {original_class}")
+
+# Define a dummy class to mask the origin
+class MERTModel(nn.Module):
+    def __call__(self, *args, **kwargs):
+        return super().__call__(*args, **kwargs)
+
+def run_test():
+    try:
+        # Temporarily change the class to a clean local one
+        # Note: This is dangerous but might fool the JIT tracer into writing a clean name
+        hf_model.__class__ = MERTModel
+        
+        # Now Trace
+        print("Tracing with patched class...")
+        traced_safe = torch.jit.trace(backbone, example_input)
+        
+        # Save to temp
+        safe_path = "/vol/release/encoder_patched.pt"
+        traced_safe.save(safe_path)
+        print(f"Saved patched model to {safe_path}")
+        
+        # Verify Load
+        print("Attempting to load patched model...")
+        loaded = torch.jit.load(safe_path)
+        print("✅ Success: Patched model loaded!")
+        
+        # Verify Parity
+        with torch.no_grad():
+            out_safe = loaded(example_input)
+            out_orig = backbone(example_input)
+        
+diff = torch.abs(out_safe - out_orig).max().item()
+        print(f"Parity Check: {diff:.2e}")
+        
+    except Exception as e:
+        print(f"❌ Patching Failed: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Restore class just in case (though we are in a notebook)
+        hf_model.__class__ = original_class
+        print("Restored original class.")
+
+run_test()

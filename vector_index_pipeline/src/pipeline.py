@@ -25,7 +25,9 @@ def run_indexing_pipeline(args):
         model_path=args.model_path,
         data_dir=args.data_dir,
         output_dir=args.index_dir,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        accelerator=args.accelerator,
+        precision=args.precision
     )
     index(index_args)
 
@@ -47,6 +49,8 @@ if __name__ == "__main__":
     # Params
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--workers", type=int, default=None)
+    parser.add_argument("--accelerator", type=str, default="gpu")
+    parser.add_argument("--precision", type=str, default="bf16-mixed")
 
     args = parser.parse_args()
     

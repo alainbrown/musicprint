@@ -10,10 +10,12 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./src:/app/src
+      - ./notebooks:/app/notebooks
       # Mount the release folder from the training pipeline to access the model
       - ../adapter_training_pipeline/release:/vol/model:ro
       - ../music:/vol/src_music:ro
-      - musicprint_index_processed:/vol/data
+      # Reuse processed data from training pipeline
+      - adapter_training_pipeline_musicprint_training_processed:/vol/data
       - musicprint_index_cache:/vol/cache
     deploy:
       resources:
@@ -28,5 +30,7 @@ services:
     command: python src/pipeline.py --model_path /vol/model/encoder.pt
 
 volumes:
-  musicprint_index_processed:
+  # Reference the external volume created by the other pipeline
+  adapter_training_pipeline_musicprint_training_processed:
+    external: true
   musicprint_index_cache:

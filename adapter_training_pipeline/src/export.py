@@ -17,9 +17,47 @@ def export_to_coreml(args):
 
     # 3. Trace/Script the model
     print("Tracing model...")
-    # We use tracing because MERT/Transformers are complex; 
-    # tracing captures the actual execution graph.
-    traced_model = torch.jit.trace(model, example_input)
+    # Type Masquerading: Temporarily substitute the dynamic class with a static
+    # local definition to generate a clean type signature in the TorchScript schema.
+    # This resolves parser errors caused by long, auto-generated remote code paths.
+    
+    # Recursive patcher
+    patched_modules = []
+    
+    def recursive_patch(module, prefix=""):
+        # Check if the module's class is dynamic (from transformers_modules)
+        if module.__class__.__module__.startswith("transformers_modules"):
+            original_class = module.__class__
+            clean_name = original_class.__name__
+            
+            # Create a local class inheriting from the original
+            # We use type() to create the class dynamically with the clean name
+            # This ensures TorchScript sees "clean_name" (or similar) instead of the long path
+            class PatchedClass(original_class):
+                pass
+            
+            # Rename the class to avoid "PatchedClass" showing up everywhere if we want
+            # though TorchScript might use the local variable name. 
+            # Let's just use the class structure.
+            PatchedClass.__name__ = clean_name
+            PatchedClass.__qualname__ = clean_name
+            
+            print(f"Patching {prefix} ({original_class.__name__}) -> {clean_name}")
+            module.__class__ = PatchedClass
+            patched_modules.append((module, original_class))
+            
+        # Recurse
+        for name, child in module.named_children():
+            recursive_patch(child, prefix=f"{prefix}.{name}")
+
+    try:
+        recursive_patch(model.backbone.backbone, prefix="backbone")
+        traced_model = torch.jit.trace(model, example_input)
+    finally:
+        # Restore all classes
+        print(f"Restoring {len(patched_modules)} patched modules...")
+        for module, original_class in reversed(patched_modules):
+            module.__class__ = original_class
 
     # 4. Convert to CoreML
     print("Converting to CoreML (this may take a few minutes)...")
