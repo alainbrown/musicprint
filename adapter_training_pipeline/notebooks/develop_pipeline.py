@@ -115,16 +115,18 @@ print(f"View 2 Shape: {data_dict['audio_2'].shape}")
 
 # %%
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-system = MusicPrintSystem().to(DEVICE).eval()
+# Pass num_classes=15 (14 MINDS samples + 1 silence)
+system = MusicPrintSystem(num_classes=15).to(DEVICE).eval()
 
 # 1. Trace the model
 print("Tracing model to TorchScript...")
 example_input = torch.randn(1, 120000).to(DEVICE)
-traced_model = torch.jit.trace(system.model, example_input)
+# We export the backbone (MERTAdapter), not the full ArcFace wrapper
+traced_model = torch.jit.trace(system.model.backbone, example_input)
 
 # 2. Verify Output Parity
 with torch.no_grad():
-    out_orig = system.model(example_input)
+    out_orig = system.model.backbone(example_input)
     out_jit = traced_model(example_input)
 
 diff = torch.abs(out_orig - out_jit).max().item()
@@ -142,15 +144,18 @@ print("\n--- 4. Verifying Model Output Stability ---")
 try:
     # Manual Forward Pass Check
     batch = next(iter(dm.train_dataloader()))
-    # Extract just one view to test the model
+    
+    # In ArcFace/System refactor, we use audio_1
     audio = batch[0]["audio_1"].to(DEVICE)
+    labels = batch[0]["label"].to(DEVICE).squeeze().long()
     
     print(f"Input Audio Stats: Min={audio.min():.3f}, Max={audio.max():.3f}, NaN={torch.isnan(audio).any()}")
     
-    system.eval()
-    with torch.no_grad():
-        embeddings = system(audio)
-        
+    system.train() # Set to train mode for loss calc
+    
+    # Forward Pass through backbone
+    embeddings = system(audio)
+    
     print(f"Output Embeddings Shape: {embeddings.shape}")
     print(f"Output Stats: Min={embeddings.min():.3f}, Max={embeddings.max():.3f}")
     
@@ -159,14 +164,9 @@ try:
     else:
         print("✅ Model Forward Pass Successful (No NaNs).")
         
-        # Now check Loss Function
-        labels = batch[0]["label"].to(DEVICE)
-        # Fake a second view for loss calculation
-        embeddings_2 = embeddings.clone() 
-        
-        # Loss expects normalized features? The loss function handles normalization internally
-        # We need to call the loss function directly
-        loss = system.criterion(embeddings, labels)
+        # Now check ArcFace Loss Function
+        print("Checking ArcFace Loss...")
+        loss = system.model.get_loss(embeddings, labels)
         print(f"Loss Value: {loss.item()}")
         
         if torch.isnan(loss):

@@ -36,13 +36,13 @@ class MusicDataModule(pl.LightningDataModule):
         self._write_list(self.val_list, self.val_files)
 
     def _write_list(self, path, files):
+        # Sort to ensure deterministic ID assignment
+        files = sorted(files)
         with open(path, "w") as f:
-            for fp in files:
-                # Use relative path to ensure uniqueness across subfolders (e.g. 1920/01.mp3 vs 1930/01.mp3)
-                rel_path = os.path.relpath(fp, self.data_dir)
-                name = os.path.splitext(rel_path)[0]
-                isrc = pack_isrc(name) if len(name) == 12 else hash(name) & 0xFFFFFFFFFFFFFFFF
-                f.write(f"{fp} {isrc}\n")
+            for idx, fp in enumerate(files):
+                # ArcFace requires contiguous integer IDs [0, N-1]
+                # We simply use the index in the sorted file list
+                f.write(f"{fp} {idx}\n")
 
     def train_dataloader(self):
         return DALILoader(

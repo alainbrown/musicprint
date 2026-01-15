@@ -13,8 +13,12 @@ def main(args):
     # 1. Init Data
     dm = MusicDataModule(data_dir=args.data_dir, batch_size=args.batch_size)
     
+    # ArcFace needs to know how many songs there are
+    num_classes = len(dm.all_files)
+    print(f"Detected {num_classes} unique songs (classes).")
+    
     # 2. Init System
-    system = MusicPrintSystem(lr=args.lr)
+    system = MusicPrintSystem(num_classes=num_classes, lr=args.lr)
     
     # 3. Init Loggers & Callbacks
     wandb_logger = WandbLogger(project="musicprint", log_model="all")

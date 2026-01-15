@@ -20,7 +20,8 @@ RUN pip install --no-cache-dir \
     faiss-gpu \
     scipy \
     librosa \
-    datasets
+    datasets \
+    pytorch-metric-learning
 
 WORKDIR /app
 
