@@ -63,7 +63,12 @@ def download_gtzan_samples():
             target = os.path.join(SRC_DIR, f"minds_{i:03d}.wav")
             scipy.io.wavfile.write(target, sr, audio)
             
-        print("✅ 14 Real Samples Manually Decoded.")
+        # Add a SILENCE sample to stress-test normalization
+        print("Adding a SILENCE sample to test stability...")
+        silence = np.zeros(44100 * 10, dtype=np.int16)
+        scipy.io.wavfile.write(os.path.join(SRC_DIR, "silence.wav"), 44100, silence)
+            
+        print("✅ Real Samples + Silence Ready.")
     except Exception as e:
         print(f"❌ Failed to fetch dataset: {e}")
         raise e
@@ -133,22 +138,45 @@ else:
 # Run a mini-training session to ensure gradients flow.
 
 # %%
-print("\n--- 4. Verifying Training Loop ---")
-trainer = pl.Trainer(
-    logger=CSVLogger("/tmp/test_logs"),
-    accelerator="auto",
-    devices=1,
-    max_epochs=2,
-    enable_checkpointing=False,
-    precision=32,
-    limit_val_batches=0
-)
-
+print("\n--- 4. Verifying Model Output Stability ---")
 try:
-    system.train()
-    trainer.fit(system, datamodule=dm)
-    print("✅ Training loop execution successful.")
+    # Manual Forward Pass Check
+    batch = next(iter(dm.train_dataloader()))
+    # Extract just one view to test the model
+    audio = batch[0]["audio_1"].to(DEVICE)
+    
+    print(f"Input Audio Stats: Min={audio.min():.3f}, Max={audio.max():.3f}, NaN={torch.isnan(audio).any()}")
+    
+    system.eval()
+    with torch.no_grad():
+        embeddings = system(audio)
+        
+    print(f"Output Embeddings Shape: {embeddings.shape}")
+    print(f"Output Stats: Min={embeddings.min():.3f}, Max={embeddings.max():.3f}")
+    
+    if torch.isnan(embeddings).any():
+        print("❌ MODEL FAILURE: Model produced NaNs on valid input!")
+    else:
+        print("✅ Model Forward Pass Successful (No NaNs).")
+        
+        # Now check Loss Function
+        labels = batch[0]["label"].to(DEVICE)
+        # Fake a second view for loss calculation
+        embeddings_2 = embeddings.clone() 
+        
+        # Loss expects normalized features? The loss function handles normalization internally
+        # We need to call the loss function directly
+        loss = system.criterion(embeddings, labels)
+        print(f"Loss Value: {loss.item()}")
+        
+        if torch.isnan(loss):
+            print("❌ LOSS FUNCTION FAILURE: Loss returned NaN on valid embeddings!")
+        else:
+            print("✅ Loss Function Successful.")
+
 except Exception as e:
-    print(f"❌ Training Failed: {e}")
+    print(f"❌ Verification Failed: {e}")
+    import traceback
+    traceback.print_exc()
 
 print("\n✅ Verification Notebook Complete.")

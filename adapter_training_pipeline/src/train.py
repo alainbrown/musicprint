@@ -37,7 +37,8 @@ def main(args):
         max_epochs=args.epochs,
         callbacks=[checkpoint_callback, LearningRateMonitor(logging_interval='step')],
         log_every_n_steps=10,
-        default_root_dir=args.checkpoint_dir
+        default_root_dir=args.checkpoint_dir,
+        accumulate_grad_batches=4
     )
     
     # 5. Auto-Tune Batch Size (Optional)

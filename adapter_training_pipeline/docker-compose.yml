@@ -10,6 +10,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - HF_HOME=/vol/cache/huggingface
       - JUPYTER_TOKEN=musicprint
+      - WANDB_MODE=disabled
     volumes:
       - ./src:/app/src
       - ./notebooks:/app/notebooks
