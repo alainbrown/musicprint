@@ -4,6 +4,7 @@ from data.module import MusicDataModule
 from writer import IndexWriter
 import torch
 import os
+import numpy as np
 
 class TorchScriptWrapper(pl.LightningModule):
     """Wraps JIT model to satisfy Lightning's predict expectations"""
@@ -38,13 +39,17 @@ class TorchScriptWrapper(pl.LightningModule):
             with torch.no_grad():
                 embeddings = self.model(windows)
             
-            # Normalize
-            embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1).cpu().numpy()
+            # Binarize: (N, 64) -> (N, 8) uint8
+            # 1. Threshold at 0
+            bits = (embeddings > 0).cpu().numpy().astype(np.uint8)
+            # 2. Pack into bytes
+            # We use 'little' to match struct.unpack('<Q') later
+            packed = np.packbits(bits, axis=1, bitorder='little')
             
             results.append({
                 "id": song_id,
-                "embeddings": embeddings,
-                "times": [j * 1.0 for j in range(len(embeddings))]
+                "embeddings": packed,
+                "times": [j * 1.0 for j in range(len(packed))]
             })
         return results
 

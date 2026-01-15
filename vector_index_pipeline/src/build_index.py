@@ -33,7 +33,11 @@ def build_index(args):
                 
                 # Pack 8 bytes into one uint64
                 pq_int = struct.unpack("<Q", pq_code.tobytes())[0]
-                all_pairs.append((pq_int, isrc))
+                
+                # Ensure isrc is treated as unsigned 64-bit (handles potential negative signed ints)
+                isrc_unsigned = isrc & 0xFFFFFFFFFFFFFFFF
+                
+                all_pairs.append((pq_int, isrc_unsigned))
 
     print(f"Total Fingerprints: {len(all_pairs):,}")
     

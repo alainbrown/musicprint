@@ -5,6 +5,7 @@ from pathlib import Path
 # Import pipeline stages
 from preprocess import preprocess_dataset
 from index import index
+from build_index import build_index
 
 def run_indexing_pipeline(args):
     print("="*60)
@@ -31,10 +32,24 @@ def run_indexing_pipeline(args):
     )
     index(index_args)
 
+    # --- Step 3: Merging ---
+    print("\n[3/3] Merging Shards into Binary Index...")
+    
+    # Save to parent of index_dir (e.g. /vol/cache/audio_index.bin)
+    output_bin = os.path.join(os.path.dirname(args.index_dir), "audio_index.bin")
+    
+    build_args = argparse.Namespace(
+        input_dir=args.index_dir,
+        output=output_bin
+    )
+    
+    build_index(build_args)
+
     print("\n" + "="*60)
     print(f"✅ INDEXING COMPLETE")
     print(f"🔹 Model Used: {args.model_path}")
-    print(f"🔹 Index Output: {args.index_dir}")
+    print(f"🔹 Shards: {args.index_dir}")
+    print(f"🔹 Binary Index: {output_bin}")
     print("="*60)
 
 if __name__ == "__main__":

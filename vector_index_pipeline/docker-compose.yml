@@ -11,6 +11,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./notebooks:/app/notebooks
+      - ./release:/app/release
       # Mount the release folder from the training pipeline to access the model
       - ../adapter_training_pipeline/release:/vol/model:ro
       - ../music:/vol/src_music:ro
@@ -27,7 +28,7 @@ services:
     shm_size: '4gb'
     stdin_open: true
     tty: true
-    command: python src/pipeline.py --model_path /vol/model/encoder.pt
+    command: python src/pipeline.py --model_path /vol/model/encoder.pt --index_dir /app/release/index
 
 volumes:
   # Reference the external volume created by the other pipeline

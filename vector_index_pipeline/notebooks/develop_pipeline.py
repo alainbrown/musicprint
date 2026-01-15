@@ -152,3 +152,39 @@ else:
             
     except Exception as e:
         print(f"❌ Release Model Failed: {e}")
+
+# %% [markdown]
+# ## 5. Validate Production Index
+# Inspect the binary file generated in the release folder.
+
+# %% 
+import struct
+
+RELEASE_INDEX = "/app/release/audio_index.bin"
+print(f"\ninspecting {RELEASE_INDEX}...")
+
+if os.path.exists(RELEASE_INDEX):
+    file_size = os.path.getsize(RELEASE_INDEX)
+    with open(RELEASE_INDEX, "rb") as f:
+        # Read Header
+        header = f.read(64)
+        magic, version, count = struct.unpack("<4sII", header[:12])
+        
+        print(f"✅ Header: Magic={magic}, Version={version}, Count={count}")
+        
+        # Verify Size
+        expected_size = 64 + (count * 16)
+        if file_size == expected_size:
+            print(f"✅ Size Integrity: Matches ({file_size} bytes)")
+        else:
+            print(f"❌ Size Mismatch: Expected {expected_size}, got {file_size}")
+            
+        # Read First 3 entries
+        print("First 3 Entries:")
+        for i in range(3):
+            data = f.read(16)
+            if data:
+                pq, isrc = struct.unpack("<QQ", data)
+                print(f"  [{i}] PQ: {pq:016X} | ISRC: {isrc}")
+else:
+    print("❌ Production index not found.")
