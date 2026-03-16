@@ -192,14 +192,31 @@ The final system will likely combine strategies from A + B or A + C. For example
 - K-means (206 → 10 windows) + binary hashing (768 floats → 16 bytes) = 160 bytes/song
 - At 100M songs: ~16GB (feasible for mobile)
 
-### Compression Experiment Plan
+### Compression Experiment Results
 
-Test in order of simplicity. Each run uses frozen MERT on 100 songs:
+All runs: frozen MERT, 100 songs (~97 after decode errors), 2,061 queries (10% of full 1s-stride windows).
 
-| Run | Strategy | Windows/song | Dim/precision | Est. storage/song |
-|-----|----------|-------------|---------------|-------------------|
-| 8   | Wider stride (5s) | ~35 | 768 float32 | ~107KB |
-| 9   | K-means k=10 | 10 | 768 float32 | ~31KB |
-| 10  | K-means k=10 + PCA 128 | 10 | 128 float32 | ~5KB |
-| 11  | K-means k=10 + binary hash | 10 | 8 bytes | 80 bytes |
-| 12  | Wider stride + binary hash | ~35 | 8 bytes | 280 bytes |
+#### A. Reducing embeddings per song
+
+| Run | Strategy | Windows/song | Storage/song | Top-1 Recall | Notes |
+|-----|----------|-------------|-------------|--------------|-------|
+| 7   | Baseline (1s stride) | 206 | 632 KB | 100.0% | Full index, no compression |
+| 8   | Wider stride (5s) | 43 | 129 KB | 99.7% | 6 queries missed |
+| 9   | K-means k=10 | 10 | 30 KB | 100.0% | Perfect recall at 20x reduction |
+| 9b  | K-means k=5 | 5 | 15 KB | 99.4% | 13 queries missed |
+| 9c  | K-means k=3 | 3 | 9 KB | 97.9% | Graceful degradation |
+| 9d  | K-means k=1 | 1 | 3 KB | 93.2% | Single centroid per song still viable |
+
+**Finding**: K-means k=10 is the sweet spot — 100% recall with 10 embeddings per song (30 KB/song at 768-dim float32). Even k=1 (one embedding per song) retains 93% recall.
+
+At 100M songs with k=10 and 768-dim float32: 30 KB × 100M = ~3 TB. Still too large for mobile. Need to also reduce embedding dimensionality.
+
+#### B. Reducing embedding dimensionality (not yet tested)
+
+| Run | Strategy | Windows/song | Dim | Storage/song | Top-1 Recall |
+|-----|----------|-------------|-----|-------------|--------------|
+| 10  | K-means k=10 + PCA 128 | 10 | 128 | 5 KB | TBD |
+| 11  | K-means k=10 + binary hash 128-bit | 10 | 16 bytes | 160 bytes | TBD |
+| 12  | K-means k=10 + binary hash 64-bit | 10 | 8 bytes | 80 bytes | TBD |
+
+Target: 80-160 bytes/song → 8-16 GB for 100M songs.
