@@ -1,0 +1,11 @@
+transformers==4.36.2
+pytorch-lightning
+pytorch-metric-learning
+coremltools
+wandb
+faiss-gpu
+scipy
+librosa
+requests
+tqdm
+numpy

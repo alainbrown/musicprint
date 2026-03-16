@@ -1,0 +1,8 @@
+pytorch-lightning
+torchvision
+pillow
+coremltools
+pandas
+numpy
+tqdm
+requests

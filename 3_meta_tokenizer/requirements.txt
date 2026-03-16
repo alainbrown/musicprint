@@ -1,0 +1,6 @@
+tokenizers
+psycopg2-binary
+sqlalchemy
+pandas
+numpy
+requests
