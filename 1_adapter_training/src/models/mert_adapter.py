@@ -12,11 +12,7 @@ class MERTAdapter(nn.Module):
             param.requires_grad = False
 
         # MERT-v1-95M hidden size is 768
-        # When output_dim == 768, no projection — just pass through pooled output
-        if output_dim == 768:
-            self.adapter = nn.Identity()
-        else:
-            self.adapter = nn.Linear(768, output_dim)
+        self.adapter = nn.Linear(768, output_dim)
 
     def forward(self, audio_tensors):
         """
