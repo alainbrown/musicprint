@@ -1,52 +1,69 @@
 import pytorch_lightning as pl
 import torch
 import torch.optim as optim
-import torch.nn.functional as F
-from models.arcface import MusicArcFaceSystem
-import os
+from models.arcface import MusicEmbeddingSystem, contrastive_loss
+
+
+CHUNK_SIZE = 32  # Process windows through MERT in chunks to avoid OOM
+
 
 class MusicPrintSystem(pl.LightningModule):
-    def __init__(self, num_classes, lr=1e-4, output_dim=768):
+    def __init__(self, num_classes=None, lr=1e-4, output_dim=768):
         super().__init__()
         self.save_hyperparameters()
-        
-        # Initialize ArcFace System (Backbone + Head)
-        self.model = MusicArcFaceSystem(
-            num_classes=num_classes,
-            embedding_dim=output_dim
-        )
+        self.model = MusicEmbeddingSystem(embedding_dim=output_dim)
 
     def forward(self, x):
-        return self.model.backbone(x)
+        return self.model(x)
+
+    def _encode_windows(self, windows):
+        """Encode windows in chunks to avoid OOM. Returns (num_windows, D)."""
+        chunks = []
+        for start in range(0, len(windows), CHUNK_SIZE):
+            chunk = windows[start : start + CHUNK_SIZE]
+            with torch.no_grad():
+                # Frozen MERT doesn't need gradients
+                pass
+            chunks.append(self(chunk))
+        return torch.cat(chunks, dim=0)
 
     def training_step(self, batch, batch_idx):
-        a1, a2, labels = batch
+        # batch is a list of (windows_tensor, label) from collate_songs
+        all_embeddings = []
+        all_labels = []
 
-        audio = torch.cat([a1, a2], dim=0)
-        targets = torch.cat([labels, labels], dim=0)
+        for windows, label in batch:
+            windows = windows.to(self.device)
+            embs = self._encode_windows(windows)  # (num_windows, D)
+            all_embeddings.append(embs)
+            all_labels.append(label.expand(len(embs)))
 
-        embeddings = self(audio)
-        loss = self.model.get_loss(embeddings, targets)
+        embeddings = torch.cat(all_embeddings, dim=0)
+        labels = torch.cat(all_labels, dim=0).to(self.device)
+
+        loss = contrastive_loss(embeddings, labels)
 
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        audio, labels = batch
+        all_embeddings = []
+        all_labels = []
 
-        embeddings = self(audio)
-        loss = self.model.get_loss(embeddings, labels)
+        for windows, label in batch:
+            windows = windows.to(self.device)
+            embs = self._encode_windows(windows)
+            all_embeddings.append(embs)
+            all_labels.append(label.expand(len(embs)))
+
+        embeddings = torch.cat(all_embeddings, dim=0)
+        labels = torch.cat(all_labels, dim=0).to(self.device)
+
+        loss = contrastive_loss(embeddings, labels)
 
         self.log("val_loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
         return loss
 
     def configure_optimizers(self):
-        # We must optimize BOTH the backbone adapter AND the ArcFace head (loss_func parameters)
-        # backbone.backbone is frozen inside MERTAdapter, so we filter for requires_grad
-        params = [
-            {'params': filter(lambda p: p.requires_grad, self.model.backbone.parameters())},
-            {'params': self.model.loss_func.parameters()} 
-        ]
-        
-        optimizer = optim.AdamW(params, lr=self.hparams.lr)
-        return optimizer
+        params = filter(lambda p: p.requires_grad, self.model.parameters())
+        return optim.AdamW(params, lr=self.hparams.lr)

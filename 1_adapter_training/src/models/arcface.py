@@ -1,37 +1,48 @@
 import torch
 import torch.nn as nn
-from pytorch_metric_learning import losses, miners
+import torch.nn.functional as F
 from .mert_adapter import MERTAdapter
 
-class MusicArcFaceSystem(nn.Module):
-    def __init__(self, num_classes, embedding_dim=768, margin=0.5, scale=64):
-        """
-        ArcFace System for Music Fingerprinting.
-        
-        Args:
-            num_classes (int): Total number of unique songs in the training set.
-            embedding_dim (int): Output dimension of the adapter (default 64).
-            margin (float): Angular margin in degrees (default 28.6 degrees / 0.5 rad).
-            scale (float): Scaling factor s (default 64).
-        """
+
+class MusicEmbeddingSystem(nn.Module):
+    def __init__(self, embedding_dim=768):
         super().__init__()
         self.backbone = MERTAdapter(output_dim=embedding_dim)
-        
-        # ArcFace Loss expects a classifier layer (The "Metric Head")
-        # We use the official library which handles the W matrix internally within the loss function
-        # But wait, pytorch-metric-learning separates the "Loss" from the "Classifier Weights" usually?
-        # Actually, ArcFaceLoss in this lib maintains the weights itself.
-        
-        self.loss_func = losses.ArcFaceLoss(
-            num_classes=num_classes,
-            embedding_size=embedding_dim,
-            margin=margin,
-            scale=scale
-        )
-        
+
     def forward(self, x):
         return self.backbone(x)
-        
-    def get_loss(self, embeddings, labels):
-        # ArcFaceLoss.forward takes (embeddings, labels)
-        return self.loss_func(embeddings, labels)
+
+
+def contrastive_loss(embeddings, labels, margin=1.0):
+    """Simple pairwise contrastive loss.
+
+    For all pairs in the batch:
+    - Same label: minimize distance
+    - Different label: push apart up to margin
+
+    Args:
+        embeddings: (N, D) L2-normalized embeddings
+        labels: (N,) integer song labels
+        margin: minimum distance for different-song pairs
+    """
+    # L2 normalize
+    embeddings = F.normalize(embeddings, dim=1)
+
+    # Pairwise cosine similarity
+    sim = embeddings @ embeddings.T  # (N, N)
+
+    # Same-song mask
+    labels = labels.unsqueeze(0)
+    same = (labels == labels.T).float()
+
+    # Loss: same-song pairs should have high similarity (target 1.0)
+    #        diff-song pairs should have low similarity (target <= -margin)
+    pos_loss = same * (1 - sim)  # pull together
+    neg_loss = (1 - same) * F.relu(sim + margin)  # push apart
+
+    # Average over all pairs (excluding diagonal for pos)
+    n = embeddings.shape[0]
+    mask = 1 - torch.eye(n, device=embeddings.device)
+    loss = (pos_loss * mask + neg_loss * mask).sum() / mask.sum()
+
+    return loss

@@ -3,8 +3,7 @@ import os
 import glob
 import random
 from torch.utils.data import DataLoader
-from isrc_utils import pack_isrc
-from .dataset import ContrastiveAudioDataset, AudioDataset
+from .dataset import SongWindowDataset, collate_songs
 
 
 def discover_files(data_dir):
@@ -23,11 +22,10 @@ def build_file_label_pairs(files, data_dir):
 
 
 class MusicDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir, batch_size=32, val_split=0.05, window_secs=5.0, noise_dir=None):
+    def __init__(self, data_dir, batch_size=2, val_split=0.05):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
-        self.noise_dir = noise_dir or os.path.join(data_dir, "noise")
 
         self.all_files = discover_files(data_dir)
 
@@ -40,7 +38,7 @@ class MusicDataModule(pl.LightningDataModule):
         self.val_pairs = build_file_label_pairs(shuffled[split_idx:], data_dir)
 
     def train_dataloader(self):
-        ds = ContrastiveAudioDataset(self.train_pairs, noise_dir=self.noise_dir)
+        ds = SongWindowDataset(self.train_pairs)
         return DataLoader(
             ds,
             batch_size=self.batch_size,
@@ -49,12 +47,13 @@ class MusicDataModule(pl.LightningDataModule):
             pin_memory=True,
             persistent_workers=True,
             prefetch_factor=2,
+            collate_fn=collate_songs,
         )
 
     def val_dataloader(self):
         if not self.val_pairs:
             return None
-        ds = AudioDataset(self.val_pairs)
+        ds = SongWindowDataset(self.val_pairs)
         return DataLoader(
             ds,
             batch_size=self.batch_size,
@@ -63,4 +62,5 @@ class MusicDataModule(pl.LightningDataModule):
             pin_memory=True,
             persistent_workers=True,
             prefetch_factor=2,
+            collate_fn=collate_songs,
         )
