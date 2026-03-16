@@ -1,5 +1,6 @@
 pytorch-lightning
 faiss-gpu
 wandb
+torchaudio
 tqdm
 numpy

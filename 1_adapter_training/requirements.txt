@@ -6,6 +6,7 @@ wandb
 faiss-gpu
 scipy
 librosa
+torchaudio
 requests
 tqdm
 numpy

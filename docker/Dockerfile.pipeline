@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir \
     datasets \
     pytorch-metric-learning \
     torchvision \
+    torchaudio \
     pillow \
     matplotlib \
     pandas \
