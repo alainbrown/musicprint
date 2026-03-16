@@ -1,65 +1,93 @@
 # MusicPrint
 
-> **High-scale acoustic fingerprinting system using MERT transformers, Product Quantization, and optimized C++ search. Scales to 100M tracks locally on mobile devices.**
+> Offline music recognition on a phone. 100 million songs, under 3GB, no server.
 
-MusicPrint is an offline-first music recognition engine designed to run efficiently on consumer hardware (e.g., iPhone 13+). It leverages state-of-the-art self-supervised audio models (MERT-v1) and vector quantization techniques to compress a 100 million song database into under 3GB.
+MusicPrint is an experiment to see if a complete Shazam-like system can run entirely on a mobile device with no network connection. It uses a self-supervised audio model (MERT-v1) to learn acoustic fingerprints, compresses them down to single bits, and searches with a brute-force Hamming scan fast enough for real-time use on an iPhone.
 
-## 🏗 Architecture
+## How It Works
 
-The system is composed of a symmetrical **Encoder-Database-Decoder** pipeline:
+### Fingerprinting
 
-1.  **Audio Understanding:**  
-    Input audio (10s @ 24kHz) is processed by a **MERT-v1 adapter** (PyTorch) to produce robust 768-dim embeddings, which are projected to a compact **64-dim latent space**.
-2.  **Indexing (Training):**  
-    These vectors are compressed using **Product Quantization (PQ)** (8 sub-vectors x 8 bits) into an optimized binary index.
-3.  **Search (Inference):**  
-    A custom **C++ Searcher** uses Asymmetric Distance Calculation (ADC) to perform nearest-neighbor search over 100M vectors in < 150ms on a mobile CPU.
+MERT-v1-95M is a pretrained audio transformer — like BERT, but for music. We freeze it and train a small adapter head on top using ArcFace loss, which pushes embeddings for the same song together and different songs apart on a hypersphere. The adapter projects MERT's 768-dim output down to 64 floats.
 
-## 📂 Repository Structure
+### Binarization
 
-*   **`adapter_training_pipeline/`**: The "Teacher". Trains the MERT adapter using **ArcFace Loss** to create robust acoustic fingerprints. Exports `encoder.pt` (TorchScript) and `MusicPrintEncoder.mlpackage` (CoreML).
-*   **`vector_index_pipeline/`**: The "Librarian". Consumes the frozen `encoder.pt` model to index millions of songs into a compressed binary format. **Zero shared code** with the training pipeline.
-*   **`libmusicprint/`**: High-performance C++ library for loading the index and performing search on iOS.
-*   **`meta_tokenizer_pipeline/`**: NLP pipeline for training BPE tokenizers to compress song metadata.
-*   **`tests/`**: End-to-End smoke tests and verification scripts.
+Each of those 64 floats gets reduced to a single bit: positive → 1, negative → 0. One song becomes one `uint64`. This works because ArcFace training makes same-song embeddings land in similar regions of the space, so their sign patterns stay consistent even after this aggressive compression.
 
-## 🚀 Quick Start
+### Search
 
-### Prerequisites
-*   **Docker** & **Docker Compose**
-*   **NVIDIA GPU** (Required for training/indexing)
+The index file is a flat array of 16-byte entries: 8 bytes for the binary hash, 8 bytes for a packed ISRC identifier. The C++ searcher memory-maps this file and does a linear scan.
 
-### Manual Development
+For each entry, it XORs the query hash against the stored hash — the result has a 1 bit everywhere the two disagree. `__builtin_popcountll` counts those bits. That's the Hamming distance. Fewer differing bits means a more similar song. A max-heap of size k tracks the best matches.
 
-**1. Train the Adapter (ArcFace)**
+At 100M songs the index is ~1.6GB. A linear scan over it is ~800M popcount operations — achievable in under 150ms on an Apple A15.
+
+### Metadata
+
+Song titles and artist names are compressed with a BPE tokenizer (65k vocab, 16-bit tokens) into a binary database with clustered range tables for O(1) ISRC lookup. Album art is encoded through a VQ-VAE into 320-byte records. Both ship alongside the index.
+
+### On the Phone
+
+The device gets five files: a CoreML encoder model, the binary hash index, the metadata database, the BPE vocabulary, and the album art index. Record 10 seconds of audio → CoreML inference → binarize → Hamming scan → look up metadata → display result. No network required.
+
+## Pipelines
+
+The system is built from four independent pipelines with no shared code between them. They communicate only through file artifacts.
+
+**Adapter Training** (`adapter_training_pipeline/`) — Trains the MERT adapter with ArcFace loss. Takes MP3s, outputs `encoder.pt` (TorchScript) and `MusicPrintEncoder.mlpackage` (CoreML).
+
+**Vector Indexing** (`vector_index_pipeline/`) — Loads the frozen encoder as a black box, runs inference on every song, binarizes the embeddings, and writes `audio_index.bin`.
+
+**Meta Tokenizer** (`meta_tokenizer_pipeline/`) — Imports a MusicBrainz dump, trains a BPE tokenizer, encodes all metadata, and builds the binary lookup tables.
+
+**Album Art Tokenizer** (`album_art_tokenizer_pipeline/`) — Trains a VQ-VAE on album covers and serializes them as 320-byte records.
+
+```
+music/ (MP3s)
+  │
+  ├──► Training Pipeline ──► encoder.pt ──► Index Pipeline ──► audio_index.bin
+  │                       └► CoreML model
+  │
+  ├──► Meta Tokenizer ──► music_meta.bin + music_decoder.bin
+  │
+  └──► Art Tokenizer ──► art.bin
+```
+
+**C++ Search Library** (`libmusicprint/`) — Static library (C++17, no external dependencies) that loads all the `.bin` files via mmap and runs the search. Also builds a `cli_search` tool for testing.
+
+## Quick Start
+
+Requires Docker, Docker Compose, and an NVIDIA GPU.
+
+**1. Train the encoder**
 ```bash
 cd adapter_training_pipeline
 docker compose up --build -d
 docker compose exec training-pipeline python src/pipeline.py
 ```
-*Output: `release/encoder.pt`, `release/MusicPrintEncoder.mlpackage`*
 
-**2. Build the Index**
+**2. Build the index**
 ```bash
 cd vector_index_pipeline
 docker compose up --build -d
-# Mounts the model from the training pipeline automatically
 docker compose exec index-pipeline python src/pipeline.py --model_path /vol/model/encoder.pt
 ```
-*Output: `cache/index/*.bin`*
 
-**3. Core Library (C++)**
+**3. Build the C++ library**
 ```bash
 cd libmusicprint
-mkdir build && cd build
-cmake .. && make
-./cli_search <query.bin> <index.bin> ...
+make
 ```
 
-## 🛠 Technology Stack
+**4. Run the end-to-end smoke test**
+```bash
+docker compose -f docker-compose.test.yml up --build
+```
 
-*   **ML Framework:** PyTorch Lightning, HuggingFace Transformers
-*   **Audio Model:** MERT-v1-95M
-*   **Data Loading:** NVIDIA DALI
-*   **Indexing:** Faiss (Training), Custom C++ (Inference)
-*   **Target Platform:** iOS (Swift/C++ Interop)
+## Status
+
+The build-time infrastructure is done — all four pipelines run, the C++ search works end-to-end in smoke tests, and CoreML export is in place. What's left is training on a real catalog, wiring up the iOS app (CoreML → C++ interop), and validating on-device performance at scale.
+
+## License
+
+MIT
