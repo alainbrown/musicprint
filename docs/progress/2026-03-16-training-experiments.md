@@ -9,9 +9,9 @@ Train an encoder that maps any 5-second audio clip to an embedding where clips f
 ```
 Song (full) → sliding 5s windows → encoder → set of embeddings (all same song label)
                                                       ↓
-                                               ArcFace loss (pushes same-song together, different-song apart)
+                                               Contrastive loss (same-song close, different-song far)
                                                       ↓
-                                               Trained encoder (ArcFace discarded)
+                                               Trained encoder (loss discarded)
 
 Indexing:  song → all window embeddings → store all (deduplicate later with k-means)
 Search:   5s clip → encoder → embedding → nearest neighbor search → song ID
@@ -20,13 +20,24 @@ Search:   5s clip → encoder → embedding → nearest neighbor search → song
 ## Training Approach
 
 Each training step processes a full song:
-1. Load entire song audio
-2. Split into all overlapping 5-second windows (1s stride)
+1. Load entire song audio (raw, via DataLoader)
+2. Split into all overlapping 5-second windows (1s stride) in the training step
 3. Encode every window through the model (chunked to fit GPU memory)
 4. All window embeddings get the same song label
-5. ArcFace loss across all embeddings in the batch
+5. Contrastive loss across all embeddings in the batch
 
 This replaces the previous approach of picking two random 5-second clips per song, which only showed the model fragments rather than the full song structure.
+
+## Recall Test Method
+
+The proper recall test indexes all songs and searches against the full index:
+1. Encode every 5-second window from all songs → full index (e.g., 175 windows × 5 songs = 875 vectors)
+2. Pick random 5-second clips (~10% of total windows, e.g., ~88 clips)
+3. For each clip, find the nearest vector in the full index
+4. Check if the nearest vector belongs to the correct song
+5. Report top-1 recall
+
+This replaces the previous test which only compared 2 clips per song (10 vectors total for 5 songs). The proper test reflects the actual use case: searching a real index.
 
 ## Experimental Variables
 
@@ -110,9 +121,28 @@ Rationale for contrastive loss as baseline: ArcFace adds complexity (stateful we
 - 40% recall (10 songs)
 - Higher similarities but gap still small. MLP alone doesn't fix it on 100 songs.
 
-### Run 5: Control (full-song training + contrastive loss)
+### Run 5: Full-song training + contrastive loss (5 songs, old test)
+- 5 songs, 50 epochs, full-song window processing, contrastive loss
+- Same-song sim: 0.92, diff-song sim: -0.18
+- Separation gap: +0.08 (first positive gap)
+- 100% recall (5/5) — but using old test method (2 clips per song)
+- **Key result**: Massive improvement in diff-song separation (-0.18 vs 0.81-0.90 in previous runs)
+- **Caveat**: Old test method, only 5 songs. Need proper full-index recall test to validate.
+
+### Next: Run 6 — Frozen MERT baseline (no adapter, proper recall test)
 - **Status**: Not yet run
-- **Changes from Run 4**:
-  - Full-song window processing (all windows per song, not two random clips)
-  - Contrastive loss replaces ArcFace (simplest possible loss, no state)
-- This is the baseline for all future experiments
+- **Goal**: Determine if MERT's raw representations are already good enough
+- **Setup**: No adapter (Identity or just mean pool), no training
+- **Test**: Proper full-index recall test
+  - Index all windows from 5 songs (~875 vectors)
+  - Query ~88 random clips (10% of windows)
+  - Search nearest neighbor across full index
+  - Report top-1 recall
+- **Why**: If frozen MERT gets high recall, the adapter training may be unnecessary for basic fingerprinting. This establishes the true baseline.
+
+### Next: Run 7 — Trained adapter with proper recall test
+- **Status**: Not yet run
+- **Goal**: Measure improvement from adapter training over frozen MERT
+- **Setup**: Same as Run 5 (MLP adapter, contrastive loss, full-song training)
+- **Test**: Same proper full-index recall test as Run 6
+- **Comparison**: Run 7 recall vs Run 6 recall shows the value of adapter training

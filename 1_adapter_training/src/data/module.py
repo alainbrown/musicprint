@@ -3,7 +3,7 @@ import os
 import glob
 import random
 from torch.utils.data import DataLoader
-from .dataset import SongWindowDataset, collate_songs
+from .dataset import SongDataset, collate_songs
 
 
 def discover_files(data_dir):
@@ -38,7 +38,7 @@ class MusicDataModule(pl.LightningDataModule):
         self.val_pairs = build_file_label_pairs(shuffled[split_idx:], data_dir)
 
     def train_dataloader(self):
-        ds = SongWindowDataset(self.train_pairs)
+        ds = SongDataset(self.train_pairs)
         return DataLoader(
             ds,
             batch_size=self.batch_size,
@@ -50,7 +50,7 @@ class MusicDataModule(pl.LightningDataModule):
     def val_dataloader(self):
         if not self.val_pairs:
             return None
-        ds = SongWindowDataset(self.val_pairs)
+        ds = SongDataset(self.val_pairs)
         return DataLoader(
             ds,
             batch_size=self.batch_size,
