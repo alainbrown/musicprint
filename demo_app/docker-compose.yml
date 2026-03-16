@@ -1,0 +1,9 @@
+services:
+  demo:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ../release:/app/release:ro
+    environment:
+      - RELEASE_DIR=/app/release
