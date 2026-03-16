@@ -5,7 +5,7 @@ from pathlib import Path
 
 # Import pipeline stages
 from download_noise import download_noise
-from preprocess import preprocess_dataset
+from preprocess import preprocess_dataset, preprocess_windows
 from train import train
 from export import export
 
@@ -19,15 +19,19 @@ def run_pipeline(args):
     download_noise()
 
     # --- Step 2: Preprocessing ---
-    print("\n[2/4] Preprocessing Audio (MP3 -> FLAC)...")
-    # We mirror source to data volume
+    print("\n[2/5] Preprocessing Audio (MP3 -> FLAC)...")
     preprocess_dataset(data_dir=args.source_dir, output_dir=args.data_dir, workers=args.workers)
 
-    # --- Step 3: Training ---
-    print("\n[3/4] Training Model...")
+    # --- Step 3: Slice into windows ---
+    windows_dir = os.path.join(args.data_dir, "windows")
+    print("\n[3/5] Slicing audio into 5s windows...")
+    preprocess_windows(flac_dir=args.data_dir, windows_dir=windows_dir, workers=args.workers)
+
+    # --- Step 4: Training ---
+    print("\n[4/5] Training Model...")
     # Prepare arguments for the training module
     train_args = argparse.Namespace(
-        data_dir=args.data_dir,
+        data_dir=windows_dir,
         checkpoint_dir=args.checkpoint_dir,
         epochs=args.epochs,
         batch_size=args.batch_size,
@@ -46,8 +50,8 @@ def run_pipeline(args):
 
     train(train_args)
 
-    # --- Step 4: Locate Best Model & Export ---
-    print("\n[4/4] Identifying Best Model & Exporting...")
+    # --- Step 5: Locate Best Model & Export ---
+    print("\n[5/5] Identifying Best Model & Exporting...")
     checkpoints = sorted(glob.glob(os.path.join(args.checkpoint_dir, "*.ckpt")), key=os.path.getmtime)
     
     if not checkpoints:

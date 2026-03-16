@@ -2,7 +2,6 @@ import os
 import glob
 import random
 import torch
-import torchaudio
 from torch.utils.data import Dataset
 
 SAMPLE_RATE = 24000
@@ -10,41 +9,36 @@ WINDOW_SAMPLES = 120000  # 5 seconds
 
 
 class ContrastiveAudioDataset(Dataset):
-    """Loads audio, crops two random 5s windows, applies augmentation."""
+    """Loads pre-sliced 5s windows and applies augmentation.
 
-    def __init__(self, file_label_pairs, noise_dir=None):
-        self.files = file_label_pairs
+    Each file is a .pt tensor of shape (120000,) — already decoded,
+    resampled, and cropped during preprocessing.
+
+    For contrastive training, __getitem__ picks two random windows
+    from the same song and augments each independently.
+    """
+
+    def __init__(self, song_windows, noise_dir=None):
+        """
+        Args:
+            song_windows: list of (label, [path1, path2, ...]) per song
+            noise_dir: directory of noise .pt files for augmentation
+        """
+        self.songs = song_windows  # [(label, [window_paths]), ...]
         self.noise_files = []
         if noise_dir and os.path.isdir(noise_dir):
-            for ext in ("*.wav", "*.flac", "*.mp3"):
-                self.noise_files.extend(glob.glob(os.path.join(noise_dir, "**", ext), recursive=True))
-
-    def _load_audio(self, path):
-        audio, sr = torchaudio.load(path)
-        if audio.shape[0] > 1:
-            audio = audio.mean(dim=0, keepdim=True)
-        if sr != SAMPLE_RATE:
-            audio = torchaudio.transforms.Resample(sr, SAMPLE_RATE)(audio)
-        return audio.squeeze(0)
-
-    def _random_crop(self, audio):
-        if audio.shape[0] < WINDOW_SAMPLES:
-            return torch.nn.functional.pad(audio, (0, WINDOW_SAMPLES - audio.shape[0]))
-        start = random.randint(0, audio.shape[0] - WINDOW_SAMPLES)
-        return audio[start : start + WINDOW_SAMPLES]
+            self.noise_files = sorted(glob.glob(os.path.join(noise_dir, "**", "*.pt"), recursive=True))
 
     def _augment(self, audio):
         if self.noise_files:
-            noise_path = random.choice(self.noise_files)
             try:
-                noise = self._load_audio(noise_path)
+                noise = torch.load(random.choice(self.noise_files), weights_only=True)
                 if noise.shape[0] >= audio.shape[0]:
                     start = random.randint(0, noise.shape[0] - audio.shape[0])
                     noise = noise[start : start + audio.shape[0]]
                 else:
                     noise = torch.nn.functional.pad(noise, (0, audio.shape[0] - noise.shape[0]))
-                gain = random.uniform(0.0, 0.3)
-                audio = audio + noise * gain
+                audio = audio + noise * random.uniform(0.0, 0.3)
             except Exception:
                 pass
 
@@ -52,38 +46,28 @@ class ContrastiveAudioDataset(Dataset):
         return audio
 
     def __getitem__(self, idx):
-        path, label = self.files[idx]
-        audio = self._load_audio(path)
-        view_1 = self._augment(self._random_crop(audio))
-        view_2 = self._augment(self._random_crop(audio))
+        label, window_paths = self.songs[idx]
+        # Pick two random windows from this song
+        p1, p2 = random.choices(window_paths, k=2)
+        view_1 = self._augment(torch.load(p1, weights_only=True))
+        view_2 = self._augment(torch.load(p2, weights_only=True))
         return view_1, view_2, torch.tensor(label, dtype=torch.long)
 
     def __len__(self):
-        return len(self.files)
+        return len(self.songs)
 
 
 class AudioDataset(Dataset):
-    """Loads audio, deterministic crop from start. For validation."""
+    """Loads a single pre-sliced 5s window per song. For validation."""
 
-    def __init__(self, file_label_pairs):
-        self.files = file_label_pairs
-
-    def _load_audio(self, path):
-        audio, sr = torchaudio.load(path)
-        if audio.shape[0] > 1:
-            audio = audio.mean(dim=0, keepdim=True)
-        if sr != SAMPLE_RATE:
-            audio = torchaudio.transforms.Resample(sr, SAMPLE_RATE)(audio)
-        return audio.squeeze(0)
+    def __init__(self, song_windows):
+        # Use first window of each song
+        self.items = [(label, paths[0]) for label, paths in song_windows if paths]
 
     def __getitem__(self, idx):
-        path, label = self.files[idx]
-        audio = self._load_audio(path)
-        if audio.shape[0] < WINDOW_SAMPLES:
-            audio = torch.nn.functional.pad(audio, (0, WINDOW_SAMPLES - audio.shape[0]))
-        else:
-            audio = audio[:WINDOW_SAMPLES]
+        label, path = self.items[idx]
+        audio = torch.load(path, weights_only=True)
         return audio, torch.tensor(label, dtype=torch.long)
 
     def __len__(self):
-        return len(self.files)
+        return len(self.items)
