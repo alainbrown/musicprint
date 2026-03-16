@@ -20,52 +20,23 @@ class MusicPrintSystem(pl.LightningModule):
         return self.model.backbone(x)
 
     def training_step(self, batch, batch_idx):
-        # Handle Dual View output from DALI
-        data_dict = batch[0]
-        
-        # ArcFace treats views as independent samples of the class
-        a1 = data_dict["audio_1"]
-        a2 = data_dict["audio_2"]
-        labels = data_dict["label"].reshape(-1).long()
+        a1, a2, labels = batch
 
-        # Concatenate: [B, T] + [B, T] -> [2*B, T]
         audio = torch.cat([a1, a2], dim=0)
-        # Duplicate labels: [B] -> [2*B]
         targets = torch.cat([labels, labels], dim=0)
-        
-        # Squeeze channel if present
-        if audio.dim() == 3:
-            audio = audio.squeeze(-1)
-            
-        # Get embeddings from backbone
+
         embeddings = self(audio)
-        
-        # Calculate ArcFace Loss
         loss = self.model.get_loss(embeddings, targets)
-        
+
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        # Validation is similar, but we might just use one view
-        # Or use both to get better loss estimate
-        data_dict = batch[0]
-        
-        if "audio" in data_dict:
-            audio = data_dict["audio"]
-        elif "audio_1" in data_dict:
-            audio = data_dict["audio_1"]
-        else:
-            raise KeyError(f"Batch keys {data_dict.keys()} do not contain 'audio' or 'audio_1'")
-            
-        labels = data_dict["label"].reshape(-1).long()
+        audio, labels = batch
 
-        if audio.dim() == 3:
-            audio = audio.squeeze(-1)
-            
         embeddings = self(audio)
         loss = self.model.get_loss(embeddings, labels)
-        
+
         self.log("val_loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
         return loss
 
