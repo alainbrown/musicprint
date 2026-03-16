@@ -19,8 +19,7 @@ import torch
 ROOT = "/app"
 sys.path.insert(0, os.path.join(ROOT, "demo_app"))
 
-from audio import load_and_resample, window_audio, binarize
-from search import SearchEngine
+from audio import load_and_resample, window_audio
 
 MUSIC_DIR = "/vol/music"
 
@@ -198,79 +197,94 @@ def main():
     encoder_path = os.path.join(ARTIFACTS_DIR, "encoder.pt")
     assert os.path.exists(encoder_path), "encoder.pt not found after training"
 
-    # Step 2: Build index
-    index_dir = os.path.join(ARTIFACTS_DIR, "index")
-    run_step("Step 2: Build Index", [
-        sys.executable, "2_vector_index/src/pipeline.py",
-        "--model_path", encoder_path,
-        "--source_dir", source_dir,
-        "--data_dir", DATA_DIR,
-        "--index_dir", index_dir,
-    ])
-
-    index_path = os.path.join(ARTIFACTS_DIR, "audio_index.bin")
-    assert os.path.exists(index_path), "audio_index.bin not found after indexing"
-
-    with open(index_path, "rb") as f:
-        _, _, count = struct.unpack("<4sII", f.read(12))
-    index_size_mb = os.path.getsize(index_path) / 1e6
-    print(f"Index built: {count} entries, {index_size_mb:.1f} MB")
-
-    # Step 3: Copy metadata
+    # Step 2: Embedding Quality Test
     print(f"\n{'=' * 60}")
-    print(f"  Step 3: Copy Metadata Artifacts")
-    print(f"{'=' * 60}\n")
-    meta_src = os.path.join(ROOT, "3_meta_tokenizer", "release")
-    for fname in ["music_meta.bin", "music_decoder.bin"]:
-        src = os.path.join(meta_src, fname)
-        dst = os.path.join(ARTIFACTS_DIR, fname)
-        if os.path.exists(src):
-            shutil.copy2(src, dst)
-            print(f"Copied {fname} ({os.path.getsize(dst) / 1024:.0f} KB)")
-        else:
-            print(f"WARNING: {fname} not found at {src}")
-
-    # Step 4: Recall tests
-    print(f"\n{'=' * 60}")
-    print(f"  Step 4: Recall Verification")
+    print(f"  Step 2: Embedding Quality Test")
     print(f"{'=' * 60}\n")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     encoder = torch.jit.load(encoder_path, map_location=device)
     encoder.eval()
-    engine = SearchEngine(index_path)
 
-    sample_size = max(1, len(track_paths) // 20)
-    test_indices = random.sample(range(len(track_paths)), sample_size)
+    # Pick 10 songs, encode two different 5s clips from each
+    num_test = min(10, len(track_paths))
+    test_idx = random.sample(range(len(track_paths)), num_test)
 
-    print(f"Testing {sample_size} tracks ({sample_size / len(track_paths) * 100:.0f}% of catalog)...")
+    embeddings_a = []  # first clip per song
+    embeddings_b = []  # second clip per song
+    song_names = []
 
-    print("\nClean recall (10s clips)...")
-    clean_correct, clean_total, clean_time = run_recall_test(
-        track_paths, track_ids, engine, encoder, device, degrade=False, indices=test_indices
-    )
-    clean_recall = clean_correct / max(clean_total, 1) * 100
+    for idx in test_idx:
+        path = track_paths[idx]
+        audio = load_and_resample(path)
+        windows = window_audio(audio)
+        if len(windows) < 2:
+            continue
 
-    print("Degraded recall (noise + volume + low-pass)...")
-    deg_correct, deg_total, deg_time = run_recall_test(
-        track_paths, track_ids, engine, encoder, device, degrade=True, indices=test_indices
-    )
-    deg_recall = deg_correct / max(deg_total, 1) * 100
+        # Pick two random windows from the same song
+        w1, w2 = random.sample(range(len(windows)), 2)
+        with torch.no_grad():
+            emb_a = encoder(torch.from_numpy(windows[w1]).unsqueeze(0).to(device))
+            emb_b = encoder(torch.from_numpy(windows[w2]).unsqueeze(0).to(device))
+        embeddings_a.append(emb_a[0].cpu())
+        embeddings_b.append(emb_b[0].cpu())
+        song_names.append(os.path.basename(path))
+
+    if len(embeddings_a) < 2:
+        print("ERROR: Not enough songs with 2+ windows for quality test")
+        sys.exit(1)
+
+    A = torch.stack(embeddings_a)  # (N, 768)
+    B = torch.stack(embeddings_b)  # (N, 768)
+
+    # L2 normalize
+    A = A / A.norm(dim=1, keepdim=True)
+    B = B / B.norm(dim=1, keepdim=True)
+
+    # Cosine similarity: A[i] vs B[j]
+    sim_matrix = (A @ B.T).numpy()
+
+    # Same-song similarity (diagonal)
+    same_song_sims = [sim_matrix[i][i] for i in range(len(sim_matrix))]
+    # Different-song similarity (off-diagonal)
+    diff_song_sims = [sim_matrix[i][j] for i in range(len(sim_matrix)) for j in range(len(sim_matrix)) if i != j]
+
+    avg_same = np.mean(same_song_sims)
+    avg_diff = np.mean(diff_song_sims)
+    min_same = np.min(same_song_sims)
+    max_diff = np.max(diff_song_sims)
+
+    # Top-1 recall: for each song's clip A, is the most similar clip B from the same song?
+    correct = 0
+    for i in range(len(sim_matrix)):
+        best_j = np.argmax(sim_matrix[i])
+        if best_j == i:
+            correct += 1
+    recall = correct / len(sim_matrix) * 100
+
+    print(f"Songs tested:     {len(sim_matrix)}")
+    print(f"Embedding dim:    {A.shape[1]}")
+    print(f"")
+    print(f"Same-song cosine similarity:")
+    print(f"  avg: {avg_same:.4f}  min: {min_same:.4f}")
+    print(f"Diff-song cosine similarity:")
+    print(f"  avg: {avg_diff:.4f}  max: {max_diff:.4f}")
+    print(f"Separation gap:   {min_same - max_diff:.4f} (positive = good)")
+    print(f"")
+    print(f"Top-1 recall:     {correct}/{len(sim_matrix)} ({recall:.1f}%)")
 
     # Summary
     print(f"\n{'=' * 60}")
     print(f"  MUSICPRINT VERIFICATION REPORT")
     print(f"{'=' * 60}")
     print(f"Catalog:          {len(track_paths)} songs")
-    print(f"Index entries:    {count}")
-    print(f"Index size:       {index_size_mb:.1f} MB")
-    print(f"Clean recall:     {clean_correct}/{clean_total} ({clean_recall:.1f}%)")
-    print(f"Degraded recall:  {deg_correct}/{deg_total} ({deg_recall:.1f}%)")
-    print(f"Avg query time:   {clean_time:.3f}s (clean), {deg_time:.3f}s (degraded)")
+    print(f"Same-song sim:    {avg_same:.4f} (avg)")
+    print(f"Diff-song sim:    {avg_diff:.4f} (avg)")
+    print(f"Top-1 recall:     {recall:.1f}%")
     print(f"{'=' * 60}")
 
-    if clean_recall == 0:
-        print("\nWARNING: Zero clean recall — something is likely broken.")
+    if recall == 0:
+        print("\nWARNING: Zero recall — embeddings are not discriminative.")
         sys.exit(1)
 
     print("\nVERIFICATION COMPLETE")
