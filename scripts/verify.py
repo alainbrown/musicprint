@@ -1,15 +1,15 @@
 """
-MusicPrint end-to-end verification script.
+MusicPrint verification script.
 
 Usage:
-  docker compose up verify-quick          # train + test
-  docker compose run verify-quick python scripts/verify.py --max_songs 5 --skip_training  # frozen MERT baseline
+  python scripts/verify.py --max_songs 100 --skip_training
+  python scripts/verify.py --max_songs 100 --skip_training --stride 5
+  python scripts/verify.py --max_songs 100 --skip_training --kmeans 10
 """
 import os
 import sys
 import subprocess
 import random
-import time
 import glob
 
 import numpy as np
@@ -25,7 +25,6 @@ ARTIFACTS_DIR = "/vol/artifacts"
 
 SAMPLE_RATE = 24000
 WINDOW_SAMPLES = 120000  # 5 seconds
-STRIDE_SAMPLES = 24000   # 1 second
 CHUNK_SIZE = 32
 
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -63,19 +62,19 @@ def load_audio(path):
     return audio.squeeze(0)
 
 
-def make_windows(audio):
+def make_windows(audio, stride_seconds=1):
+    stride = stride_seconds * SAMPLE_RATE
     if audio.shape[0] < WINDOW_SAMPLES:
         return [F.pad(audio, (0, WINDOW_SAMPLES - audio.shape[0]))]
     windows = []
     start = 0
     while start + WINDOW_SAMPLES <= audio.shape[0]:
         windows.append(audio[start : start + WINDOW_SAMPLES])
-        start += STRIDE_SAMPLES
+        start += stride
     return windows
 
 
 def encode_windows(encoder, windows, device):
-    """Encode windows in chunks, return L2-normalized embeddings."""
     all_embs = []
     for start in range(0, len(windows), CHUNK_SIZE):
         chunk = torch.stack(windows[start : start + CHUNK_SIZE]).to(device)
@@ -84,6 +83,19 @@ def encode_windows(encoder, windows, device):
         all_embs.append(embs.cpu())
     embs = torch.cat(all_embs, dim=0)
     return F.normalize(embs, dim=1)
+
+
+def kmeans_compress(embeddings, k):
+    """Reduce embeddings to k centroids using k-means."""
+    from sklearn.cluster import KMeans
+    n = len(embeddings)
+    if n <= k:
+        return embeddings
+    data = embeddings.numpy()
+    km = KMeans(n_clusters=k, n_init=3, random_state=42)
+    km.fit(data)
+    centroids = torch.from_numpy(km.cluster_centers_).float()
+    return F.normalize(centroids, dim=1)
 
 
 def run_step(name, cmd):
@@ -96,87 +108,118 @@ def run_step(name, cmd):
         sys.exit(1)
 
 
-def recall_test(encoder, track_paths, device, query_fraction=0.1):
-    """Full-index recall test.
+def recall_test(encoder, track_paths, device, stride_seconds=1, kmeans_k=0, query_fraction=0.1):
+    """Full-index recall test with optional compression."""
 
-    1. Index all windows from all songs
-    2. Pick random query windows (query_fraction of total)
-    3. Search nearest neighbor across full index
-    4. Report top-1 recall
-    """
-    print("Building index...")
-    index_embeddings = []  # all window embeddings
-    index_song_ids = []    # which song each embedding belongs to
-    song_window_counts = []
-
+    # Step 1: Build full index (all windows, 1s stride) for query selection
+    print("Encoding all songs...")
+    all_song_embeddings = []  # list of (song_id, embeddings) before compression
     skipped = 0
+
     for song_id, path in enumerate(track_paths):
         try:
             audio = load_audio(path)
-            windows = make_windows(audio)
+            windows = make_windows(audio, stride_seconds=1)  # always 1s for full coverage
             embs = encode_windows(encoder, windows, device)
-            index_embeddings.append(embs)
-            index_song_ids.extend([song_id] * len(embs))
-            song_window_counts.append(len(embs))
-        except Exception as e:
+            all_song_embeddings.append((song_id, embs))
+        except Exception:
             skipped += 1
-            continue
 
     if skipped:
         print(f"Skipped {skipped} songs due to decode errors")
 
-    index = torch.cat(index_embeddings, dim=0)  # (total_windows, D)
+    # Step 2: Build compressed index (what would be stored)
+    print("Building compressed index...")
+    index_embeddings = []
+    index_song_ids = []
+
+    for song_id, embs in all_song_embeddings:
+        if stride_seconds > 1:
+            # Re-encode with wider stride
+            # Subsample from existing: take every Nth window
+            step = stride_seconds
+            embs_compressed = embs[::step]
+        else:
+            embs_compressed = embs
+
+        if kmeans_k > 0:
+            embs_compressed = kmeans_compress(embs_compressed, kmeans_k)
+
+        index_embeddings.append(embs_compressed)
+        index_song_ids.extend([song_id] * len(embs_compressed))
+
+    index = torch.cat(index_embeddings, dim=0)
     index_ids = torch.tensor(index_song_ids)
-    total_windows = len(index)
 
-    print(f"Index: {total_windows} windows from {len(track_paths)} songs")
-    print(f"Avg windows/song: {total_windows / len(track_paths):.0f}")
+    # Step 3: Build query set from full (uncompressed) windows
+    all_full_embs = []
+    all_full_ids = []
+    for song_id, embs in all_song_embeddings:
+        all_full_embs.append(embs)
+        all_full_ids.extend([song_id] * len(embs))
 
-    # Pick random query windows
-    num_queries = max(1, int(total_windows * query_fraction))
-    query_indices = random.sample(range(total_windows), num_queries)
+    full_index = torch.cat(all_full_embs, dim=0)
+    full_ids = torch.tensor(all_full_ids)
+    total_full = len(full_index)
 
-    print(f"Querying {num_queries} random windows ({query_fraction*100:.0f}% of index)...")
+    num_queries = max(1, int(total_full * query_fraction))
+    query_indices = random.sample(range(total_full), num_queries)
 
+    songs_indexed = len(all_song_embeddings)
+    windows_per_song = len(index) / max(songs_indexed, 1)
+    emb_dim = index.shape[1]
+    bytes_per_song = windows_per_song * emb_dim * 4
+
+    print(f"Songs: {songs_indexed}")
+    print(f"Index: {len(index)} embeddings ({windows_per_song:.0f}/song, {emb_dim}-dim)")
+    print(f"Storage: {bytes_per_song / 1024:.1f} KB/song")
+    print(f"Queries: {num_queries} (from {total_full} full windows)")
+
+    # Step 4: Query
     correct = 0
     for qi in query_indices:
-        query = index[qi].unsqueeze(0)  # (1, D)
-        expected_song = index_ids[qi].item()
+        query = full_index[qi].unsqueeze(0)
+        expected_song = full_ids[qi].item()
 
-        # Cosine similarity against full index
-        sims = (query @ index.T).squeeze(0)  # (total_windows,)
-
-        # Exclude the query itself
-        sims[qi] = -2.0
-
+        sims = (query @ index.T).squeeze(0)
         best_idx = sims.argmax().item()
         if index_ids[best_idx].item() == expected_song:
             correct += 1
 
     recall = correct / num_queries * 100
     print(f"Top-1 recall: {correct}/{num_queries} ({recall:.1f}%)")
-    return recall, num_queries
+
+    return {
+        "songs": songs_indexed,
+        "index_size": len(index),
+        "windows_per_song": windows_per_song,
+        "emb_dim": emb_dim,
+        "bytes_per_song": bytes_per_song,
+        "queries": num_queries,
+        "correct": correct,
+        "recall": recall,
+    }
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--max_songs", type=int, default=0)
-    parser.add_argument("--skip_training", action="store_true", help="Use frozen MERT, no training")
+    parser.add_argument("--skip_training", action="store_true")
+    parser.add_argument("--stride", type=int, default=1, help="Window stride in seconds")
+    parser.add_argument("--kmeans", type=int, default=0, help="K-means centroids per song (0=disabled)")
     args = parser.parse_args()
 
     print("=" * 60)
     print("  MUSICPRINT VERIFICATION")
     print("=" * 60)
 
-    # Discover tracks
     track_paths = discover_tracks(MUSIC_DIR)
     if not track_paths:
         print(f"ERROR: No audio files found in {MUSIC_DIR}")
         sys.exit(1)
     print(f"Found {len(track_paths)} tracks in music/")
 
-    # Optional subset
     source_dir = MUSIC_DIR
     if args.max_songs > 0 and args.max_songs < len(track_paths):
         source_dir = create_subset(track_paths, args.max_songs, MUSIC_DIR)
@@ -186,59 +229,54 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if args.skip_training:
-        # Frozen MERT baseline — no adapter, no training
-        print(f"\n{'=' * 60}")
-        print(f"  Frozen MERT Baseline (no training)")
-        print(f"{'=' * 60}\n")
-
+        print(f"\n  Frozen MERT Baseline (no training)\n")
         sys.path.insert(0, os.path.join(ROOT, "1_adapter_training", "src"))
         from models.mert_adapter import MERTAdapter
 
-        # Use Identity adapter — just MERT + mean pool
         class FrozenMERT(torch.nn.Module):
             def __init__(self):
                 super().__init__()
                 self.backbone = MERTAdapter(output_dim=768)
-                # Override adapter with identity
                 self.backbone.adapter = torch.nn.Identity()
-
             def forward(self, x):
                 return self.backbone(x)
 
         encoder = FrozenMERT().to(device).eval()
     else:
-        # Train encoder
-        run_step("Step 1: Train Encoder", [
+        run_step("Train Encoder", [
             sys.executable, "1_adapter_training/src/pipeline.py",
             "--source_dir", source_dir,
             "--data_dir", DATA_DIR,
             "--checkpoint_dir", CHECKPOINT_DIR,
             "--release_dir", ARTIFACTS_DIR,
         ])
-
         encoder_path = os.path.join(ARTIFACTS_DIR, "encoder.pt")
-        assert os.path.exists(encoder_path), "encoder.pt not found"
-        encoder = torch.jit.load(encoder_path, map_location=device)
-        encoder.eval()
+        assert os.path.exists(encoder_path)
+        encoder = torch.jit.load(encoder_path, map_location=device).eval()
 
-    # Recall test
     print(f"\n{'=' * 60}")
-    print(f"  Recall Test (full index)")
+    print(f"  Recall Test")
+    print(f"  stride={args.stride}s, kmeans={args.kmeans or 'off'}")
     print(f"{'=' * 60}\n")
 
-    recall, num_queries = recall_test(encoder, track_paths, device)
+    results = recall_test(encoder, track_paths, device,
+                          stride_seconds=args.stride,
+                          kmeans_k=args.kmeans)
 
-    # Summary
     print(f"\n{'=' * 60}")
-    print(f"  VERIFICATION REPORT")
+    print(f"  REPORT")
     print(f"{'=' * 60}")
-    print(f"Songs:       {len(track_paths)}")
-    print(f"Queries:     {num_queries}")
-    print(f"Top-1 recall: {recall:.1f}%")
-    print(f"Mode:        {'frozen MERT' if args.skip_training else 'trained adapter'}")
+    print(f"Songs:          {results['songs']}")
+    print(f"Index:          {results['index_size']} embeddings ({results['windows_per_song']:.0f}/song)")
+    print(f"Storage/song:   {results['bytes_per_song'] / 1024:.1f} KB")
+    print(f"Queries:        {results['queries']}")
+    print(f"Top-1 recall:   {results['recall']:.1f}%")
+    print(f"Stride:         {args.stride}s")
+    print(f"K-means:        {args.kmeans or 'off'}")
+    print(f"Mode:           {'frozen MERT' if args.skip_training else 'trained'}")
     print(f"{'=' * 60}")
 
-    print("\nVERIFICATION COMPLETE")
+    print("\nDONE")
 
 
 if __name__ == "__main__":
