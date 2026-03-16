@@ -19,7 +19,7 @@ def build_file_label_pairs(files, data_dir):
     for fp in files:
         rel_path = os.path.relpath(fp, data_dir)
         name = os.path.splitext(rel_path)[0]
-        label = pack_isrc(name) if len(name) == 12 else hash(name) & 0xFFFFFFFFFFFFFFFF
+        label = pack_isrc(name) if len(name) == 12 else hash(name) & 0x7FFFFFFFFFFFFFFF
         pairs.append((fp, label))
     return pairs
 

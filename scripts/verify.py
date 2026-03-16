@@ -59,7 +59,7 @@ def file_to_id(filepath, data_dir):
     name = os.path.splitext(rel_path)[0]
     if len(name) == 12:
         return pack_isrc(name)
-    return hash(name) & 0xFFFFFFFFFFFFFFFF
+    return hash(name) & 0x7FFFFFFFFFFFFFFF
 
 
 def discover_tracks(music_dir):
