@@ -1,0 +1,141 @@
+services:
+  training:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.pipeline
+    image: musicprint-pipeline:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - HF_HOME=/vol/cache/huggingface
+      - JUPYTER_TOKEN=musicprint
+      - WANDB_MODE=disabled
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./1_adapter_training/src:/app/src
+      - ./1_adapter_training/notebooks:/app/notebooks
+      - ./1_adapter_training/release:/vol/release
+      - ./music:/vol/src_music:ro
+      - musicprint_data:/vol/data
+      - musicprint_logs:/vol/logs
+      - musicprint_checkpoints:/vol/checkpoints
+      - musicprint_cache:/vol/cache
+    ports:
+      - "8888:8888"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: '8gb'
+    stdin_open: true
+    tty: true
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='musicprint'
+
+  indexing:
+    image: musicprint-pipeline:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./2_vector_index/src:/app/src
+      - ./2_vector_index/notebooks:/app/notebooks
+      - ./2_vector_index/release:/app/release
+      - ./1_adapter_training/release:/vol/model:ro
+      - ./music:/vol/src_music:ro
+      - musicprint_data:/vol/data
+      - musicprint_cache:/vol/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: '4gb'
+    stdin_open: true
+    tty: true
+    command: python src/pipeline.py --model_path /vol/model/encoder.pt --index_dir /app/release/index
+
+  meta-tokenizer:
+    image: musicprint-pipeline:latest
+    environment:
+      - JUPYTER_TOKEN=musicprint
+      - PYTHONPATH=/app/src
+      - DB_HOST=mb-db
+      - DB_PORT=5432
+      - DB_USER=musicbrainz
+      - DB_PASSWORD=musicbrainz
+      - DB_NAME=musicbrainz_db
+    volumes:
+      - ./3_meta_tokenizer/src:/app/src
+      - ./3_meta_tokenizer/notebooks:/app/notebooks
+      - ./3_meta_tokenizer/release:/vol/release
+      - musicprint_data:/vol/data
+      - musicprint_cache:/vol/cache
+    ports:
+      - "8889:8888"
+    stdin_open: true
+    tty: true
+    shm_size: '1gb'
+    depends_on:
+      - mb-db
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='musicprint'
+
+  mb-db:
+    image: postgres:16-alpine
+    shm_size: '1gb'
+    environment:
+      - POSTGRES_USER=musicbrainz
+      - POSTGRES_PASSWORD=musicbrainz
+      - POSTGRES_DB=musicbrainz_db
+    volumes:
+      - mb_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  album-art:
+    image: musicprint-pipeline:latest
+    environment:
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./4_album_art/src:/app/src
+      - ./4_album_art/notebooks:/app/notebooks
+      - ./3_meta_tokenizer/release:/vol/meta_release:ro
+      - musicprint_data:/vol/data
+      - musicprint_logs:/vol/logs
+      - musicprint_checkpoints:/vol/checkpoints
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: '8gb'
+    stdin_open: true
+    tty: true
+    command: tail -f /dev/null
+
+  demo:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.demo
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./release:/app/release:ro
+    environment:
+      - RELEASE_DIR=/app/release
+
+volumes:
+  musicprint_data:
+  musicprint_logs:
+  musicprint_checkpoints:
+  musicprint_cache:
+  mb_pgdata:
