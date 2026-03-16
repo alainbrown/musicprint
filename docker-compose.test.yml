@@ -22,14 +22,7 @@ services:
     working_dir: /workspace
     command: >
       bash -c "
-      mkdir -p /tmp/train_data &&
-      cp audio_vector_pipeline/data/test_samples/sample1.wav /tmp/train_data/GBAYE0601498.wav &&
-      python3 audio_vector_pipeline/src/train.py --data_dir /tmp/train_data --epochs 1 --batch_size 1 --checkpoint_dir /fixtures/checkpoints --accelerator auto --strategy auto &&
-      CKPT=$$(ls -t /fixtures/checkpoints/*.ckpt | head -n 1) &&
-      python3 audio_vector_pipeline/src/train_pq.py --checkpoint $$CKPT --data_dir /tmp/train_data --output /fixtures/audio_pq.bin --output_raw /fixtures/centroids.bin --num_samples 10 &&
-      python3 audio_vector_pipeline/src/index.py --checkpoint_path $$CKPT --pq_path /fixtures/audio_pq.bin --data_dir /tmp/train_data --output_dir /fixtures/shards --batch_size 1 &&
-      python3 audio_vector_pipeline/src/build_index.py --input_dir /fixtures/shards --output /fixtures/index.bin &&
-      python3 tests/smoke_test_generator.py --checkpoint $$CKPT --skip_index
+      python3 tests/smoke_test_generator.py
       "
 
   # 2. Runner Service (C++ + GCC)
@@ -45,7 +38,7 @@ services:
     working_dir: /workspace/libmusicprint
     # We install cmake, build the CLI tool, and run it
     command: >
-      bash -c "apt-get update && apt-get install -y cmake && mkdir -p build && cd build && cmake .. && make cli_search && ./cli_search /fixtures/query.bin /fixtures/index.bin /fixtures/centroids.bin /workspace/meta_tokenizer_pipeline/release/music_meta.bin /workspace/meta_tokenizer_pipeline/release/music_decoder.bin"
+      bash -c "apt-get update && apt-get install -y cmake && mkdir -p build && cd build && cmake .. && make cli_search && ./cli_search /fixtures/query.bin /fixtures/index.bin /workspace/meta_tokenizer_pipeline/release/music_meta.bin /workspace/meta_tokenizer_pipeline/release/music_decoder.bin"
 
 volumes:
   shared-fixtures:

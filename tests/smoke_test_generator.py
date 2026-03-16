@@ -8,7 +8,7 @@ import numpy as np
 
 # Paths
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-AUDIO_PIPE = os.path.join(ROOT, "audio_vector_pipeline")
+AUDIO_PIPE = os.path.join(ROOT, "adapter_training_pipeline")
 LIB_ROOT = os.path.join(ROOT, "libmusicprint")
 CLI_BIN = os.path.join(LIB_ROOT, "build/cli_search")
 
@@ -71,29 +71,26 @@ def run_smoke_test(args):
     with open(QUERY_BIN, "wb") as f:
         f.write(vector.astype(np.float32).tobytes())
 
-    # 2. Generate Index & Centroids
-    if args.skip_index and os.path.exists(INDEX_BIN) and os.path.exists(CENTROIDS_BIN):
+    # 2. Generate Index (Binary Hamming)
+    if args.skip_index and os.path.exists(INDEX_BIN):
         print(f"✅ Using existing fixtures in {FIXTURE_DIR}")
         return
 
     print("Step 2: Creating temporary index fixtures...")
-    M, K, D = 8, 256, 64 # MERTAdapter outputs 64-dim vectors
-    d_sub = D // M # 8
     
-    # Cheat: Make Centroid 0 match the query parts exactly
-    centroids = np.random.rand(M, K, d_sub).astype(np.float32)
-    for m in range(M):
-        centroids[m, 0, :] = vector[m*d_sub : (m+1)*d_sub]
-    
-    with open(CENTROIDS_BIN, "wb") as f:
-        f.write(centroids.tobytes())
-        
+    # Binarize vector for Index
+    # Matches Python: bit[i] = 1 if float[i] > 0
+    bits = (vector > 0).astype(np.uint8) # (64,)
+    packed = np.packbits(bits, bitorder='little') # (8,)
+    pq_int = struct.unpack("<Q", packed.tobytes())[0]
+
     with open(INDEX_BIN, "wb") as f:
+        # Header: Magic(4), Version(4), Count(4), Padding(52)
         f.write(struct.pack("<4sII", b"MPAF", 1, 1))
         f.write(b"\x00" * 52)
-        # Entry: Code [0,0,0,0,0,0,0,0] + Packed ISRC
-        f.write(bytes([0]*8))
-        f.write(struct.pack("<Q", pack_isrc(TARGET_ISRC)))
+        
+        # Entry: Hash(8) + Packed ISRC(8)
+        f.write(struct.pack("<QQ", pq_int, pack_isrc(TARGET_ISRC)))
 
     print(f"✅ Fixtures generated at {FIXTURE_DIR}")
 

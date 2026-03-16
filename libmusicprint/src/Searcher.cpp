@@ -1,83 +1,51 @@
 
 #include "Searcher.h"
-#include <cmath>
 #include <algorithm>
 #include <queue>
 #include <cstring>
+#include <bit> // For std::popcount in C++20, or use builtin
 
 namespace musicprint {
 
 Searcher::Searcher() {}
 Searcher::~Searcher() {}
 
-void Searcher::load(const std::string& index_path, const std::string& pq_codebook_path) {
+void Searcher::load(const std::string& index_path) {
     indexReader_.open(index_path);
-    codebookReader_.open(pq_codebook_path);
 
     // 1. Setup Index Pointers
     // Format: [Header (64 bytes)][Entries]
-    // Entry: [8 bytes PQ Code][8 bytes Packed ISRC] = 16 bytes
-    // We skip the header (64 bytes)
+    // Entry: [8 bytes Hash][8 bytes Packed ISRC] = 16 bytes
     size_t header_size = 64;
     size_t entry_size = 16;
     
     if (indexReader_.getSize() < header_size) {
         num_vectors_ = 0;
-        codes_ = nullptr;
+        index_data_ = nullptr;
     } else {
-        codes_ = static_cast<const uint8_t*>(indexReader_.getPointer(header_size));
+        index_data_ = static_cast<const uint8_t*>(indexReader_.getPointer(header_size));
         num_vectors_ = (indexReader_.getSize() - header_size) / entry_size;
     }
-
-    // 2. Setup Codebook Pointers
-    // Codebook format: [M][K][d_sub] floats
-    d_sub_ = D_ / M_;
-    centroids_ = static_cast<const float*>(codebookReader_.getPointer(0));
 }
 
-std::vector<SearchResult> Searcher::search(const std::vector<float>& query, int k) const {
-    if (query.size() != D_) return {};
-
-    // 1. Precompute Distance Table (M x K)
-    std::vector<float> dist_table(M_ * K_);
-
-    for (size_t m = 0; m < M_; ++m) {
-        size_t query_offset = m * d_sub_;
-        size_t table_offset = m * K_;
-        size_t centroid_base = m * K_ * d_sub_;
-
-        for (size_t k_idx = 0; k_idx < K_; ++k_idx) {
-            float dist = 0.0f;
-            size_t centroid_offset = centroid_base + (k_idx * d_sub_);
-            for (size_t d = 0; d < d_sub_; ++d) {
-                float diff = query[query_offset + d] - centroids_[centroid_offset + d];
-                dist += diff * diff;
-            }
-            dist_table[table_offset + k_idx] = dist;
-        }
-    }
-
-    // 2. Scan Index (ADC)
+std::vector<SearchResult> Searcher::search(uint64_t query_hash, int k) const {
     // Priority Queue to keep Top-K (Max-Heap)
-    // We store <Distance, IndexInFile> temporarily, then resolve ISRC later
-    std::priority_queue<std::pair<float, uint32_t>> pq;
+    // We store <Distance, IndexInFile>
+    std::priority_queue<std::pair<uint32_t, uint32_t>> pq;
     size_t entry_size = 16;
 
     for (uint32_t i = 0; i < num_vectors_; ++i) {
-        float dist = 0.0f;
-        const uint8_t* entry = codes_ + (i * entry_size);
-        
-        // Unrolled loop for M=8
-        dist += dist_table[0 * K_ + entry[0]];
-        dist += dist_table[1 * K_ + entry[1]];
-        dist += dist_table[2 * K_ + entry[2]];
-        dist += dist_table[3 * K_ + entry[3]];
-        dist += dist_table[4 * K_ + entry[4]];
-        dist += dist_table[5 * K_ + entry[5]];
-        dist += dist_table[6 * K_ + entry[6]];
-        dist += dist_table[7 * K_ + entry[7]];
+        // Read stored hash (first 8 bytes of entry)
+        const uint8_t* entry = index_data_ + (i * entry_size);
+        uint64_t stored_hash = *reinterpret_cast<const uint64_t*>(entry);
 
-        if (pq.size() < k) {
+        // Hamming Distance
+        uint64_t xor_val = stored_hash ^ query_hash;
+        
+        // Use builtin for speed (GCC/Clang)
+        uint32_t dist = __builtin_popcountll(xor_val);
+
+        if (pq.size() < (size_t)k) {
             pq.push({dist, i});
         } else if (dist < pq.top().first) {
             pq.pop();
@@ -85,15 +53,15 @@ std::vector<SearchResult> Searcher::search(const std::vector<float>& query, int 
         }
     }
 
-    // 3. Extract Results
+    // Extract Results
     std::vector<SearchResult> results;
     results.reserve(pq.size());
     while (!pq.empty()) {
         uint32_t idx = pq.top().second;
-        float dist = pq.top().first;
+        uint32_t dist = pq.top().first;
         
         // Read ISRC from the entry (Offset 8)
-        const uint8_t* entry = codes_ + (idx * entry_size);
+        const uint8_t* entry = index_data_ + (idx * entry_size);
         uint64_t packed_isrc = *reinterpret_cast<const uint64_t*>(entry + 8);
         
         results.push_back({packed_isrc, dist});
