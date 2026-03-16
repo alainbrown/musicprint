@@ -164,9 +164,8 @@ def main():
         "--data_dir", DATA_DIR,
         "--checkpoint_dir", CHECKPOINT_DIR,
         "--release_dir", RELEASE_DIR,
+        "--auto_batch_size",
     ])
-    # Override env for this step
-    os.environ["WANDB_MODE"] = "disabled"
 
     encoder_path = os.path.join(RELEASE_DIR, "encoder.pt")
     assert os.path.exists(encoder_path), "encoder.pt not found after training"
