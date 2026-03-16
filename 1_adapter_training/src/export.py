@@ -88,8 +88,6 @@ def export_to_coreml(args):
 
     # Save CoreML for the App
     output_path = os.path.join(args.output_dir, "MusicPrintEncoder.mlpackage")
-    if os.path.islink(output_path):
-        os.unlink(output_path)
     mlmodel.save(output_path)
     
     print(f"✅ Successfully exported CoreML model to: {output_path}")

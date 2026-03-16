@@ -131,10 +131,12 @@ services:
       - HF_HOME=/vol/cache/huggingface
       - WANDB_MODE=disabled
     volumes:
-      - .:/workspace
+      - .:/workspace:ro
+      - ./music:/workspace/music:ro
       - musicprint_data:/vol/data
       - musicprint_checkpoints:/vol/checkpoints
       - musicprint_cache:/vol/cache
+      - musicprint_artifacts:/vol/artifacts
     working_dir: /workspace
     deploy:
       resources:
@@ -155,10 +157,12 @@ services:
       - HF_HOME=/vol/cache/huggingface
       - WANDB_MODE=disabled
     volumes:
-      - .:/workspace
+      - .:/workspace:ro
+      - ./music:/workspace/music:ro
       - musicprint_data:/vol/data
       - musicprint_checkpoints:/vol/checkpoints
       - musicprint_cache:/vol/cache
+      - musicprint_artifacts:/vol/artifacts
     working_dir: /workspace
     deploy:
       resources:
@@ -186,4 +190,5 @@ volumes:
   musicprint_logs:
   musicprint_checkpoints:
   musicprint_cache:
+  musicprint_artifacts:
   mb_pgdata:

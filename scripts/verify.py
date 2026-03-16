@@ -23,13 +23,15 @@ from audio import load_and_resample, window_audio, binarize
 from search import SearchEngine
 
 MUSIC_DIR = os.path.join(ROOT, "music")
-RELEASE_DIR = os.path.join(ROOT, "release")
+
+# All working files go to Docker volumes — never write to /workspace
 DATA_DIR = "/vol/data"
 CHECKPOINT_DIR = "/vol/checkpoints"
+ARTIFACTS_DIR = "/vol/artifacts"
 
-os.makedirs(RELEASE_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
 
 def pack_isrc(isrc_str):
@@ -189,15 +191,15 @@ def main():
         "--source_dir", source_dir,
         "--data_dir", DATA_DIR,
         "--checkpoint_dir", CHECKPOINT_DIR,
-        "--release_dir", RELEASE_DIR,
+        "--release_dir", ARTIFACTS_DIR,
         "--auto_batch_size",
     ])
 
-    encoder_path = os.path.join(RELEASE_DIR, "encoder.pt")
+    encoder_path = os.path.join(ARTIFACTS_DIR, "encoder.pt")
     assert os.path.exists(encoder_path), "encoder.pt not found after training"
 
     # Step 2: Build index
-    index_dir = os.path.join(RELEASE_DIR, "index")
+    index_dir = os.path.join(ARTIFACTS_DIR, "index")
     run_step("Step 2: Build Index", [
         sys.executable, "2_vector_index/src/pipeline.py",
         "--model_path", encoder_path,
@@ -206,7 +208,7 @@ def main():
         "--index_dir", index_dir,
     ])
 
-    index_path = os.path.join(RELEASE_DIR, "audio_index.bin")
+    index_path = os.path.join(ARTIFACTS_DIR, "audio_index.bin")
     assert os.path.exists(index_path), "audio_index.bin not found after indexing"
 
     with open(index_path, "rb") as f:
@@ -221,7 +223,7 @@ def main():
     meta_src = os.path.join(ROOT, "3_meta_tokenizer", "release")
     for fname in ["music_meta.bin", "music_decoder.bin"]:
         src = os.path.join(meta_src, fname)
-        dst = os.path.join(RELEASE_DIR, fname)
+        dst = os.path.join(ARTIFACTS_DIR, fname)
         if os.path.exists(src):
             shutil.copy2(src, dst)
             print(f"Copied {fname} ({os.path.getsize(dst) / 1024:.0f} KB)")
