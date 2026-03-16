@@ -34,6 +34,8 @@ RUN pip install --no-cache-dir \
 
 WORKDIR /app
 
+COPY . /app
+
 ENV PYTHONPATH="${PYTHONPATH}:/app/src"
 
 EXPOSE 8888

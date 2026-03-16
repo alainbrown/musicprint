@@ -16,13 +16,13 @@ import numpy as np
 import torch
 
 # Paths
-ROOT = "/workspace"
+ROOT = "/app"
 sys.path.insert(0, os.path.join(ROOT, "demo_app"))
 
 from audio import load_and_resample, window_audio, binarize
 from search import SearchEngine
 
-MUSIC_DIR = os.path.join(ROOT, "music")
+MUSIC_DIR = "/vol/music"
 
 # All working files go to Docker volumes — never write to /workspace
 DATA_DIR = "/vol/data"

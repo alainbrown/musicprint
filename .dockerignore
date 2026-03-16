@@ -1,0 +1,8 @@
+music/
+.git/
+*.pt
+*.ckpt
+*.pth
+*.mlpackage
+__pycache__/
+libmusicprint/build/
