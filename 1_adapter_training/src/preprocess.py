@@ -94,87 +94,11 @@ def preprocess_dataset(data_dir, output_dir, workers=None):
     print(f"⏭️ Skipped:   {skip_count}")
     print(f"❌ Errors:    {error_count}")
 
-def slice_to_windows(args):
-    """Worker function to slice a single FLAC into 5s windows saved as .pt files."""
-    flac_path, windows_dir, song_idx = args
-
-    # Check if already sliced
-    marker = os.path.join(windows_dir, f"{song_idx:06d}_done")
-    if os.path.exists(marker):
-        return "skipped"
-
-    try:
-        import torchaudio
-        import torch
-
-        audio, sr = torchaudio.load(flac_path)
-        if audio.shape[0] > 1:
-            audio = audio.mean(dim=0, keepdim=True)
-        audio = audio.squeeze(0)  # (Time,)
-
-        window_size = sr * 5   # 5 seconds
-        stride = sr * 1        # 1 second stride
-
-        if audio.shape[0] < window_size:
-            # Pad short audio to one window
-            audio = torch.nn.functional.pad(audio, (0, window_size - audio.shape[0]))
-
-        os.makedirs(windows_dir, exist_ok=True)
-        count = 0
-        start = 0
-        while start + window_size <= audio.shape[0]:
-            window = audio[start : start + window_size]
-            torch.save(window, os.path.join(windows_dir, f"{song_idx:06d}_{count:04d}.pt"))
-            count += 1
-            start += stride
-
-        # Write marker so we skip on re-run
-        open(marker, "w").close()
-        return count
-    except Exception as e:
-        return f"error: {e}"
-
-
-def preprocess_windows(flac_dir, windows_dir, workers=None):
-    """Slice all FLACs into 5-second overlapping windows saved as .pt tensors."""
-    if workers is None:
-        workers = max(1, cpu_count() - 2)
-
-    flacs = sorted(glob.glob(os.path.join(flac_dir, "**/*.flac"), recursive=True))
-    if not flacs:
-        print(f"No FLAC files found in {flac_dir}")
-        return
-
-    tasks = [(fp, windows_dir, idx) for idx, fp in enumerate(flacs)]
-
-    print(f"Slicing {len(flacs)} songs into 5s windows (1s stride) with {workers} workers...")
-
-    total_windows = 0
-    skip_count = 0
-    error_count = 0
-
-    with Pool(workers) as pool:
-        for result in tqdm(pool.imap_unordered(slice_to_windows, tasks), total=len(tasks)):
-            if result == "skipped":
-                skip_count += 1
-            elif isinstance(result, int):
-                total_windows += result
-            else:
-                error_count += 1
-
-    print(f"\nWindow Slicing Complete.")
-    print(f"✅ Windows created: {total_windows}")
-    print(f"⏭️ Songs skipped:  {skip_count}")
-    print(f"❌ Errors:         {error_count}")
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="/vol/src_music")
     parser.add_argument("--output_dir", type=str, default="/vol/data")
-    parser.add_argument("--windows_dir", type=str, default="/vol/data/windows")
     parser.add_argument("--workers", type=int, default=None)
     args = parser.parse_args()
-
+    
     preprocess_dataset(args.data_dir, args.output_dir, args.workers)
-    preprocess_windows(args.output_dir, args.windows_dir, args.workers)

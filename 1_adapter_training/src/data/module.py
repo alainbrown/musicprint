@@ -2,48 +2,45 @@ import pytorch_lightning as pl
 import os
 import glob
 import random
-from collections import defaultdict
 from torch.utils.data import DataLoader
+from isrc_utils import pack_isrc
 from .dataset import ContrastiveAudioDataset, AudioDataset
 
 
-def discover_song_windows(windows_dir):
-    """Find all .pt window files and group by song index.
+def discover_files(data_dir):
+    for ext in ("*.flac", "*.wav", "*.mp3"):
+        files = sorted(glob.glob(os.path.join(data_dir, "**", ext), recursive=True))
+        if files:
+            return files
+    return []
 
-    Files are named {song_idx:06d}_{window_idx:04d}.pt.
-    Returns list of (song_idx, [path1, path2, ...]) sorted by song_idx.
-    """
-    files = sorted(glob.glob(os.path.join(windows_dir, "*.pt")))
-    songs = defaultdict(list)
-    for fp in files:
-        name = os.path.splitext(os.path.basename(fp))[0]
-        parts = name.split("_")
-        if len(parts) == 2:
-            song_idx = int(parts[0])
-            songs[song_idx].append(fp)
 
-    return [(idx, songs[idx]) for idx in sorted(songs.keys())]
+def build_file_label_pairs(files, data_dir):
+    pairs = []
+    for idx, fp in enumerate(sorted(files)):
+        pairs.append((fp, idx))
+    return pairs
 
 
 class MusicDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir, batch_size=32, val_split=0.05, noise_dir=None):
+    def __init__(self, data_dir, batch_size=32, val_split=0.05, window_secs=5.0, noise_dir=None):
         super().__init__()
+        self.data_dir = data_dir
         self.batch_size = batch_size
-        self.noise_dir = noise_dir
+        self.noise_dir = noise_dir or os.path.join(data_dir, "noise")
 
-        all_songs = discover_song_windows(data_dir)
-        self.all_files = all_songs  # for len() compatibility with train.py
+        self.all_files = discover_files(data_dir)
 
         random.seed(42)
-        shuffled = list(all_songs)
+        shuffled = list(self.all_files)
         random.shuffle(shuffled)
 
         split_idx = int(len(shuffled) * (1 - val_split))
-        self.train_songs = shuffled[:split_idx]
-        self.val_songs = shuffled[split_idx:]
+        self.train_pairs = build_file_label_pairs(shuffled[:split_idx], data_dir)
+        self.val_pairs = build_file_label_pairs(shuffled[split_idx:], data_dir)
 
     def train_dataloader(self):
-        ds = ContrastiveAudioDataset(self.train_songs, noise_dir=self.noise_dir)
+        ds = ContrastiveAudioDataset(self.train_pairs, noise_dir=self.noise_dir)
         return DataLoader(
             ds,
             batch_size=self.batch_size,
@@ -55,9 +52,9 @@ class MusicDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
-        if not self.val_songs:
+        if not self.val_pairs:
             return None
-        ds = AudioDataset(self.val_songs)
+        ds = AudioDataset(self.val_pairs)
         return DataLoader(
             ds,
             batch_size=self.batch_size,
