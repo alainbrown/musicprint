@@ -57,23 +57,24 @@ music/ (MP3s)
 
 ## Quick Start
 
-Requires Docker, Docker Compose, and an NVIDIA GPU.
+Requires Docker, Docker Compose, and an NVIDIA GPU. Everything runs from the root `docker-compose.yml`.
 
-**1. Train the encoder**
+**1. Build the pipeline image**
 ```bash
-cd 1_adapter_training
-docker compose up --build -d
-docker compose exec training-pipeline python src/pipeline.py
+docker compose build training
 ```
 
-**2. Build the index**
+**2. Train the encoder**
 ```bash
-cd 2_vector_index
-docker compose up --build -d
-docker compose exec index-pipeline python src/pipeline.py --model_path /vol/model/encoder.pt
+docker compose run training python src/pipeline.py
 ```
 
-**3. Build the C++ library**
+**3. Build the index**
+```bash
+docker compose run indexing
+```
+
+**4. Build the C++ library** (optional, for iOS)
 ```bash
 cd libmusicprint
 make
@@ -81,15 +82,12 @@ make
 
 ## Demo Notebook
 
-The `demo.py` notebook trains, indexes, and verifies the full system from a `music/` folder. Run it inside the training pipeline container:
+The `demo.py` notebook trains, indexes, and verifies the full system from a `music/` folder. Run it inside the training container:
 
 ```bash
-cd 1_adapter_training
-docker compose up --build -d
-docker compose exec training-pipeline bash
-# Inside container:
-cd /workspace
-jupyter lab  # open demo.py as a notebook
+docker compose up training
+# Open http://localhost:8888 (token: musicprint)
+# Open demo.py as a notebook
 ```
 
 It reports clean and degraded recall numbers for a 5% sample of your catalog.
@@ -99,8 +97,7 @@ It reports clean and degraded recall numbers for a 5% sample of your catalog.
 A browser-based demo that identifies songs from mic input or file upload.
 
 ```bash
-cd demo_app
-docker compose up --build
+docker compose up demo
 # Open http://localhost:5000
 ```
 
