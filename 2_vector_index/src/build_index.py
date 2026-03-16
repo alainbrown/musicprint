@@ -14,7 +14,7 @@ def build_index(args):
     
     shard_files = glob.glob(os.path.join(args.input_dir, "*.pt"))
     for sf in tqdm(shard_files, desc="Reading Shards"):
-        data = torch.load(sf)
+        data = torch.load(sf, weights_only=False)
         # data is a list of results from predict_step
         # result: {"id": isrc, "embeddings": (N, 64), "times": [...]}
         for result in data:
