@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MusicPrint Demo</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #111; color: #eee; display: flex; justify-content: center; padding: 40px 20px; }
+        .container { max-width: 480px; width: 100%; }
+        h1 { font-size: 1.4em; margin-bottom: 24px; text-align: center; }
+        .controls { display: flex; gap: 12px; margin-bottom: 24px; }
+        button, label.upload { flex: 1; padding: 14px; border: 1px solid #333; border-radius: 8px; background: #1a1a1a; color: #eee; font-size: 1em; cursor: pointer; text-align: center; }
+        button:hover, label.upload:hover { background: #252525; }
+        button.recording { background: #7f1d1d; border-color: #b91c1c; }
+        input[type="file"] { display: none; }
+        .status { text-align: center; color: #888; margin-bottom: 16px; min-height: 20px; }
+        .result { border: 1px solid #333; border-radius: 8px; padding: 20px; background: #1a1a1a; display: none; }
+        .result.visible { display: block; }
+        .result .title { font-size: 1.2em; font-weight: 600; margin-bottom: 4px; }
+        .result .artist { color: #aaa; margin-bottom: 12px; }
+        .result .meta { font-size: 0.85em; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MusicPrint</h1>
+        <div class="controls">
+            <button id="mic-btn">Record</button>
+            <label class="upload">
+                Upload
+                <input type="file" id="file-input" accept="audio/*">
+            </label>
+        </div>
+        <div class="status" id="status"></div>
+        <div class="result" id="result">
+            <div class="title" id="r-title"></div>
+            <div class="artist" id="r-artist"></div>
+            <div class="meta" id="r-meta"></div>
+        </div>
+    </div>
+    <script>
+        const micBtn = document.getElementById('mic-btn');
+        const fileInput = document.getElementById('file-input');
+        const status = document.getElementById('status');
+        const resultDiv = document.getElementById('result');
+        let mediaRecorder = null;
+        let chunks = [];
+
+        micBtn.addEventListener('click', async () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                return;
+            }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                chunks = [];
+                mediaRecorder.ondataavailable = e => chunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    stream.getTracks().forEach(t => t.stop());
+                    micBtn.textContent = 'Record';
+                    micBtn.classList.remove('recording');
+                    const blob = new Blob(chunks);
+                    sendAudio(blob, 'recording.webm');
+                };
+                mediaRecorder.start();
+                micBtn.textContent = 'Stop';
+                micBtn.classList.add('recording');
+                status.textContent = 'Listening...';
+                resultDiv.classList.remove('visible');
+            } catch (e) {
+                status.textContent = 'Microphone access denied';
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                sendAudio(fileInput.files[0], fileInput.files[0].name);
+                fileInput.value = '';
+            }
+        });
+
+        async function sendAudio(blob, filename) {
+            status.textContent = 'Identifying...';
+            resultDiv.classList.remove('visible');
+            const form = new FormData();
+            form.append('audio', blob, filename);
+            try {
+                const res = await fetch('/identify', { method: 'POST', body: form });
+                const data = await res.json();
+                if (data.error) {
+                    status.textContent = data.error;
+                } else if (!data.match) {
+                    status.textContent = 'No match found';
+                } else {
+                    status.textContent = '';
+                    document.getElementById('r-title').textContent = data.title;
+                    document.getElementById('r-artist').textContent = data.artist;
+                    document.getElementById('r-meta').textContent = 'Hamming distance: ' + data.distance;
+                    resultDiv.classList.add('visible');
+                }
+            } catch (e) {
+                status.textContent = 'Request failed';
+            }
+        }
+    </script>
+</body>
+</html>
