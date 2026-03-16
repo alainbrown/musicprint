@@ -211,12 +211,28 @@ All runs: frozen MERT, 100 songs (~97 after decode errors), 2,061 queries (10% o
 
 At 100M songs with k=10 and 768-dim float32: 30 KB × 100M = ~3 TB. Still too large for mobile. Need to also reduce embedding dimensionality.
 
-#### B. Reducing embedding dimensionality (not yet tested)
+#### B. Reducing embedding dimensionality (k-means k=10 base)
 
-| Run | Strategy | Windows/song | Dim | Storage/song | Top-1 Recall |
-|-----|----------|-------------|-----|-------------|--------------|
-| 10  | K-means k=10 + PCA 128 | 10 | 128 | 5 KB | TBD |
-| 11  | K-means k=10 + binary hash 128-bit | 10 | 16 bytes | 160 bytes | TBD |
-| 12  | K-means k=10 + binary hash 64-bit | 10 | 8 bytes | 80 bytes | TBD |
+| Run | Strategy | Windows/song | Storage/song | Top-1 Recall | @ 100M songs |
+|-----|----------|-------------|-------------|--------------|-------------|
+| 10  | + PCA 128 | 10 | 5 KB | 99.7% | 500 GB |
+| 11  | + binary 768-bit | 10 | 960 bytes | 99.8% | 96 GB |
+| 12  | + PCA 128 + binary | 10 | 160 bytes | 99.3% | 16 GB |
+| 13  | + PCA 64 + binary | 10 | 80 bytes | 96.7% | 8 GB |
 
-Target: 80-160 bytes/song → 8-16 GB for 100M songs.
+**Finding**: Binary hashing of the full 768-dim vector (Run 11) loses almost nothing — 99.8% recall at 960 bytes/song. PCA 128 + binary (Run 12) achieves 99.3% at just 160 bytes/song — that's 16 GB for 100M songs.
+
+#### Summary: Full compression pipeline
+
+| Config | Storage/song | Recall | @ 100M songs | Feasible for mobile? |
+|--------|-------------|--------|-------------|---------------------|
+| Full baseline | 632 KB | 100.0% | 63 TB | No |
+| k=10 | 30 KB | 100.0% | 3 TB | No |
+| k=10 + binary 768 | 960 B | 99.8% | 96 GB | Borderline |
+| k=10 + PCA128 + binary | 160 B | 99.3% | 16 GB | Possible |
+| k=10 + PCA64 + binary | 80 B | 96.7% | 8 GB | Yes |
+
+The target was <3 GB. At 80 bytes/song (k=10, PCA 64, binary), 100M songs = 8 GB — still above target. Options:
+- Reduce k from 10 to 5 (halves storage): k=5 + PCA64 + binary = ~40 bytes/song = 4 GB
+- Reduce k to 3: ~24 bytes/song = 2.4 GB (within target)
+- Accept fewer songs or slightly larger storage
