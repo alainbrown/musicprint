@@ -109,13 +109,21 @@ def recall_test(encoder, track_paths, device, query_fraction=0.1):
     index_song_ids = []    # which song each embedding belongs to
     song_window_counts = []
 
+    skipped = 0
     for song_id, path in enumerate(track_paths):
-        audio = load_audio(path)
-        windows = make_windows(audio)
-        embs = encode_windows(encoder, windows, device)
-        index_embeddings.append(embs)
-        index_song_ids.extend([song_id] * len(embs))
-        song_window_counts.append(len(embs))
+        try:
+            audio = load_audio(path)
+            windows = make_windows(audio)
+            embs = encode_windows(encoder, windows, device)
+            index_embeddings.append(embs)
+            index_song_ids.extend([song_id] * len(embs))
+            song_window_counts.append(len(embs))
+        except Exception as e:
+            skipped += 1
+            continue
+
+    if skipped:
+        print(f"Skipped {skipped} songs due to decode errors")
 
     index = torch.cat(index_embeddings, dim=0)  # (total_windows, D)
     index_ids = torch.tensor(index_song_ids)
