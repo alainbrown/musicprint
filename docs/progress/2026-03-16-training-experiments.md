@@ -140,14 +140,66 @@ Rationale for contrastive loss as baseline: ArcFace adds complexity (stateful we
 - **Implication**: The adapter training in Runs 1-5 may have been unnecessary. The poor recall in Runs 2-4 was due to the flawed test method (2 clips per song), not the encoder quality.
 - **Open question**: Does this hold at scale (100, 1000, 6966 songs)?
 
-### Next: Run 7 — Frozen MERT at 100 songs
-- **Status**: Not yet run
-- **Goal**: Test if frozen MERT recall holds with more songs
-- **Setup**: Same as Run 6 (frozen MERT, no training)
-- **Test**: Full-index recall on 100 songs
+### Run 7: Frozen MERT at 100 songs
+- 100 songs (3 skipped due to decode errors), **no training**, frozen MERT + mean pool
+- Indexed 20,611 windows (avg 206 windows/song)
+- Queried 2,061 random windows (10%)
+- **Top-1 recall: 2,061/2,061 (100.0%)**
+- **Conclusion**: Frozen MERT maintains perfect recall at 100-song scale. Adapter training is not needed for basic fingerprinting.
 
-### Next: Run 8 — Trained adapter at 100 songs (if needed)
-- **Status**: Not yet run
-- **Goal**: Only run if Run 7 shows degraded recall — test if adapter training helps at scale
-- **Setup**: MLP adapter, contrastive loss, full-song training
-- **Test**: Full-index recall on 100 songs, compare to Run 7
+---
+
+## Phase 2: Embedding Compression
+
+The encoder works. Now the question is: how much can we compress the index while preserving recall?
+
+### Baseline
+- 100 songs, ~206 windows/song, 768-dim float32 per window
+- Storage: 206 × 768 × 4 bytes = ~632KB per song
+- At 100M songs: ~63TB (not feasible for mobile)
+- **Top-1 recall: 100%**
+
+### Compression Strategies to Test
+
+Each strategy will be tested on 100 songs with the same proper recall test (10% query). Goal: find the best recall at the smallest storage.
+
+#### A. Reduce embeddings per song
+
+| Strategy | Description | Target |
+|----------|-------------|--------|
+| **Wider stride** | Increase window stride (e.g., 5s instead of 1s) — fewer windows, no computation change | ~35 windows/song |
+| **K-means clustering** | Cluster the ~206 windows per song, keep k centroids | 10 embeddings/song |
+| **Temporal pooling** | Average groups of adjacent windows | 10-20 embeddings/song |
+
+#### B. Reduce embedding dimensionality
+
+| Strategy | Description | Target |
+|----------|-------------|--------|
+| **PCA** | Project 768-dim → lower dim using principal components | 128-256 dim |
+| **Trained linear projection** | Learn a Linear(768, D) that preserves discrimination | 128-256 dim |
+| **Binary hashing** | Sign bits of embedding → uint64/uint128 | 8-16 bytes/embedding |
+
+#### C. Reduce precision
+
+| Strategy | Description | Target |
+|----------|-------------|--------|
+| **float16** | Half precision | 50% size reduction |
+| **Product quantization** | Quantize sub-vectors to codebook indices | 8-16 bytes/embedding |
+
+#### D. Combined
+
+The final system will likely combine strategies from A + B or A + C. For example:
+- K-means (206 → 10 windows) + binary hashing (768 floats → 16 bytes) = 160 bytes/song
+- At 100M songs: ~16GB (feasible for mobile)
+
+### Compression Experiment Plan
+
+Test in order of simplicity. Each run uses frozen MERT on 100 songs:
+
+| Run | Strategy | Windows/song | Dim/precision | Est. storage/song |
+|-----|----------|-------------|---------------|-------------------|
+| 8   | Wider stride (5s) | ~35 | 768 float32 | ~107KB |
+| 9   | K-means k=10 | 10 | 768 float32 | ~31KB |
+| 10  | K-means k=10 + PCA 128 | 10 | 128 float32 | ~5KB |
+| 11  | K-means k=10 + binary hash | 10 | 8 bytes | 80 bytes |
+| 12  | Wider stride + binary hash | ~35 | 8 bytes | 280 bytes |
