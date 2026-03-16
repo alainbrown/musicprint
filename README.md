@@ -79,14 +79,36 @@ cd libmusicprint
 make
 ```
 
-**4. Run the end-to-end smoke test**
+## Demo Notebook
+
+The `demo.py` notebook trains, indexes, and verifies the full system from a `music/` folder. Run it inside the training pipeline container:
+
 ```bash
-docker compose -f docker-compose.test.yml up --build
+cd 1_adapter_training
+docker compose up --build -d
+docker compose exec training-pipeline bash
+# Inside container:
+cd /workspace
+jupyter lab  # open demo.py as a notebook
 ```
+
+It reports clean and degraded recall numbers for a 5% sample of your catalog.
+
+## Web App Demo
+
+A browser-based demo that identifies songs from mic input or file upload.
+
+```bash
+cd demo_app
+docker compose up --build
+# Open http://localhost:5000
+```
+
+Requires pre-built artifacts in `release/` (produced by the notebook or by running the pipelines individually).
 
 ## Status
 
-The build-time infrastructure is done — all four pipelines run, the C++ search works end-to-end in smoke tests, and CoreML export is in place. What's left is training on a real catalog, wiring up the iOS app (CoreML → C++ interop), and validating on-device performance at scale.
+The build-time infrastructure is done — all four pipelines run, the C++ search works end-to-end, and CoreML export is in place. What's left is training on a real catalog and validating on-device performance at scale.
 
 ## License
 
