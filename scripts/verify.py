@@ -47,6 +47,31 @@ def pack_isrc(isrc_str):
     return (country << 40) | (reg << 24) | (year << 17) | desig
 
 
+def file_to_id(filepath, data_dir):
+    """Convert a file path to an ID, matching the data module's logic.
+
+    Uses pack_isrc if the stem is a 12-char ISRC, otherwise hashes
+    the relative path. Must match 2_vector_index/src/data/module.py.
+    """
+    rel_path = os.path.relpath(filepath, data_dir)
+    name = os.path.splitext(rel_path)[0]
+    if len(name) == 12:
+        return pack_isrc(name)
+    return hash(name) & 0xFFFFFFFFFFFFFFFF
+
+
+def discover_tracks(music_dir):
+    """Recursively find audio files. Returns (filepaths, ids)."""
+    import glob
+    files = sorted(glob.glob(os.path.join(music_dir, "**/*.flac"), recursive=True))
+    if not files:
+        files = sorted(glob.glob(os.path.join(music_dir, "**/*.wav"), recursive=True))
+    if not files:
+        files = sorted(glob.glob(os.path.join(music_dir, "**/*.mp3"), recursive=True))
+    ids = [file_to_id(f, music_dir) for f in files]
+    return files, ids
+
+
 def degrade_audio(audio, sr=24000):
     snr_db = random.uniform(5, 15)
     signal_power = np.mean(audio ** 2)
@@ -64,16 +89,16 @@ def degrade_audio(audio, sr=24000):
     return audio
 
 
-def run_recall_test(tracks, isrcs, engine, encoder, device, degrade=False, indices=None):
+def run_recall_test(track_paths, track_ids, engine, encoder, device, degrade=False, indices=None):
     if indices is None:
-        sample_size = max(1, len(tracks) // 20)
-        indices = random.sample(range(len(tracks)), sample_size)
+        sample_size = max(1, len(track_paths) // 20)
+        indices = random.sample(range(len(track_paths)), sample_size)
     correct = 0
     total_time = 0
 
     for idx in indices:
-        track_path = os.path.join(MUSIC_DIR, tracks[idx])
-        expected_isrc = pack_isrc(isrcs[idx])
+        track_path = track_paths[idx]
+        expected_id = track_ids[idx]
 
         audio = load_and_resample(track_path)
 
@@ -101,7 +126,7 @@ def run_recall_test(tracks, isrcs, engine, encoder, device, degrade=False, indic
                 best_result = result
         total_time += time.time() - t0
 
-        if best_result and best_result["song_id"] == expected_isrc:
+        if best_result and best_result["song_id"] == expected_id:
             correct += 1
 
     avg_time = total_time / max(len(indices), 1)
@@ -123,13 +148,12 @@ def main():
     print("  MUSICPRINT END-TO-END VERIFICATION")
     print("=" * 60)
 
-    # Check for music
-    tracks = [f for f in os.listdir(MUSIC_DIR) if f.endswith((".mp3", ".flac", ".wav"))]
-    isrcs = [os.path.splitext(f)[0] for f in tracks]
-    if not tracks:
+    # Discover tracks (recursive, matches data module logic)
+    track_paths, track_ids = discover_tracks(MUSIC_DIR)
+    if not track_paths:
         print(f"ERROR: No audio files found in {MUSIC_DIR}")
         sys.exit(1)
-    print(f"Found {len(tracks)} tracks in music/")
+    print(f"Found {len(track_paths)} tracks in music/")
 
     # Step 1: Train encoder
     env = os.environ.copy()
@@ -189,20 +213,20 @@ def main():
     encoder.eval()
     engine = SearchEngine(index_path)
 
-    sample_size = max(1, len(tracks) // 20)
-    test_indices = random.sample(range(len(tracks)), sample_size)
+    sample_size = max(1, len(track_paths) // 20)
+    test_indices = random.sample(range(len(track_paths)), sample_size)
 
-    print(f"Testing {sample_size} tracks ({sample_size / len(tracks) * 100:.0f}% of catalog)...")
+    print(f"Testing {sample_size} tracks ({sample_size / len(track_paths) * 100:.0f}% of catalog)...")
 
     print("\nClean recall (10s clips)...")
     clean_correct, clean_total, clean_time = run_recall_test(
-        tracks, isrcs, engine, encoder, device, degrade=False, indices=test_indices
+        track_paths, track_ids, engine, encoder, device, degrade=False, indices=test_indices
     )
     clean_recall = clean_correct / max(clean_total, 1) * 100
 
     print("Degraded recall (noise + volume + low-pass)...")
     deg_correct, deg_total, deg_time = run_recall_test(
-        tracks, isrcs, engine, encoder, device, degrade=True, indices=test_indices
+        track_paths, track_ids, engine, encoder, device, degrade=True, indices=test_indices
     )
     deg_recall = deg_correct / max(deg_total, 1) * 100
 
@@ -210,7 +234,7 @@ def main():
     print(f"\n{'=' * 60}")
     print(f"  MUSICPRINT VERIFICATION REPORT")
     print(f"{'=' * 60}")
-    print(f"Catalog:          {len(tracks)} songs")
+    print(f"Catalog:          {len(track_paths)} songs")
     print(f"Index entries:    {count}")
     print(f"Index size:       {index_size_mb:.1f} MB")
     print(f"Clean recall:     {clean_correct}/{clean_total} ({clean_recall:.1f}%)")
