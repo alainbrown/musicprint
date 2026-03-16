@@ -16,23 +16,39 @@ Runs inside the existing `musicprint-training` container (the training pipeline 
 
 **Step 1 — Train Encoder**
 
-Runs the adapter training pipeline as a subprocess (`python adapter_training_pipeline/src/pipeline.py`), not via direct import. This avoids conflicts with WandB initialization, Lightning trainer event loops, and DALI GPU contexts inside the notebook kernel. The notebook sets `WANDB_MODE=disabled` in the environment before invoking.
+Runs the adapter training pipeline as a subprocess, not via direct import. This avoids conflicts with WandB initialization, Lightning trainer event loops, and DALI GPU contexts inside the notebook kernel.
+
+```bash
+WANDB_MODE=disabled python adapter_training_pipeline/src/pipeline.py \
+  --source_dir music/ \
+  --data_dir /tmp/musicprint_data \
+  --checkpoint_dir /tmp/musicprint_checkpoints \
+  --release_dir release/
+```
 
 Output: `release/encoder.pt` (TorchScript).
 
 **Step 2 — Build Index**
 
-Runs the vector index pipeline as a subprocess (`python vector_index_pipeline/src/pipeline.py --model_path release/encoder.pt`). This uses the existing windowing logic: each song is split into 5-second windows (120,000 samples at 24kHz) with 1-second stride, each window produces a separate binary hash, and all windows are written as entries in the index. A single song has multiple entries.
+Runs the vector index pipeline as a subprocess. This uses the existing windowing logic: each song is split into 5-second windows (120,000 samples at 24kHz) with 1-second stride, each window produces a separate binary hash, and all windows are written as entries in the index. A single song has multiple entries.
 
-Output: `release/audio_index.bin` (64-byte header + 16-byte entries: 8B hash + 8B packed ISRC).
+```bash
+python vector_index_pipeline/src/pipeline.py \
+  --model_path release/encoder.pt \
+  --source_dir music/ \
+  --data_dir /tmp/musicprint_data \
+  --index_dir release/index
+```
+
+Output: `release/audio_index.bin` (64-byte header + 16-byte entries: 8B hash + 8B packed ISRC). Note: the pipeline writes to `os.path.dirname(index_dir)/audio_index.bin`, so `--index_dir release/index` produces `release/audio_index.bin`.
 
 **Step 3 — Copy Metadata Artifacts**
 
-The metadata DB requires a MusicBrainz PostgreSQL instance, which is outside the scope of this demo. Instead, the notebook copies the pre-built artifacts from `meta_tokenizer_pipeline/release/` (which are git-tracked) into `release/`. These files are: `music_meta.bin`, `music_decoder.bin`, `music_encoder.json`.
+The metadata DB requires a MusicBrainz PostgreSQL instance, which is outside the scope of this demo. Instead, the notebook copies the pre-built artifacts from `meta_tokenizer_pipeline/release/` (which are git-tracked) into `release/`. These files are: `music_meta.bin` and `music_decoder.bin`. (The `music_encoder.json` tokenizer model is only needed at build time by `build_db.py` and is not copied.)
 
 **Step 4 — Clean Verification**
 
-Randomly selects 5% of tracks. For each, takes a random 10-second segment, splits it into 5-second windows (matching the encoder's training window), encodes each window, binarizes, and searches the index. A song is "identified" if any window's top-1 match returns the correct ISRC (majority vote across windows).
+Randomly selects 5% of tracks. For each, takes a random 10-second segment, splits it into 5-second windows (matching the encoder's training window), encodes each window, binarizes, and searches the index. The best match across all windows (lowest Hamming distance) is taken as the result. A song is "identified" if that best match returns the correct ISRC.
 
 Reports top-1 recall (% of test tracks correctly identified).
 
