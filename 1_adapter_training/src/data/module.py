@@ -43,10 +43,7 @@ class MusicDataModule(pl.LightningDataModule):
             ds,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=2,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
+            num_workers=0,
             collate_fn=collate_songs,
         )
 
@@ -58,9 +55,6 @@ class MusicDataModule(pl.LightningDataModule):
             ds,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=2,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
+            num_workers=0,
             collate_fn=collate_songs,
         )
