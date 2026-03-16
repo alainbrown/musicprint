@@ -17,10 +17,10 @@ music/
 **/release/*.json
 
 # Exceptions for Meta Pipeline Release
-!meta_tokenizer_pipeline/release/music_meta.bin
-!meta_tokenizer_pipeline/release/music_decoder.bin
-!meta_tokenizer_pipeline/release/music_encoder.json
-!meta_tokenizer_pipeline/release/album_manifest.csv
+!3_meta_tokenizer/release/music_meta.bin
+!3_meta_tokenizer/release/music_decoder.bin
+!3_meta_tokenizer/release/music_encoder.json
+!3_meta_tokenizer/release/album_manifest.csv
 
 # Python artifacts
 __pycache__/

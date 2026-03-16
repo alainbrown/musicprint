@@ -133,13 +133,13 @@ This ensures parity between the training (PyTorch) and inference (C++) environme
 ### A. The Split Pipeline Architecture
 To ensure stability and separation of concerns, the system uses a **Shared-Nothing** architecture split into two independent pipelines.
 
-1.  **`adapter_training_pipeline` (The Teacher):**
+1.  **`1_adapter_training` (The Teacher):**
     *   **Goal:** Learn the "Musical Fingerprint" function.
     *   **Method:** Trains a MERT Adapter using **ArcFace Loss** on a labeled dataset.
     *   **Artifact:** Exports a frozen TorchScript model (`encoder.pt`) and CoreML package.
     *   **No Shared Code:** Does not know about indexing or search.
 
-2.  **`vector_index_pipeline` (The Librarian):**
+2.  **`2_vector_index` (The Librarian):**
     *   **Goal:** Build the search database.
     *   **Method:** Consumes `encoder.pt` as a black box to inference millions of songs.
     *   **Artifact:** Binary index files (`index.bin`).

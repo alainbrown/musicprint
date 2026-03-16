@@ -18,17 +18,17 @@ make clean    # rm -rf build
 Individual test binaries after build: `build/test_art`, `build/test_meta`, `build/test_search`.
 CLI tool: `build/cli_search <query.bin> <index.bin> <music_meta.bin> <music_decoder.bin>`
 
-### Training Pipeline (adapter_training_pipeline)
+### Training Pipeline (1_adapter_training)
 ```bash
-cd adapter_training_pipeline
+cd 1_adapter_training
 docker compose up --build -d
 docker compose exec training-pipeline python src/pipeline.py
 ```
 Outputs: `release/encoder.pt` (TorchScript), `release/MusicPrintEncoder.mlpackage` (CoreML)
 
-### Indexing Pipeline (vector_index_pipeline)
+### Indexing Pipeline (2_vector_index)
 ```bash
-cd vector_index_pipeline
+cd 2_vector_index
 docker compose up --build -d
 docker compose exec index-pipeline python src/pipeline.py --model_path /vol/model/encoder.pt
 ```
@@ -45,13 +45,13 @@ Two-stage: `smoke-gen` (Python/GPU) generates fixtures → `smoke-run` (GCC 12) 
 ### Split Pipeline Design
 The system has **four independent pipelines** with no shared code between them:
 
-1. **adapter_training_pipeline/** — "Teacher": Trains a MERT-v1-95M adapter with ArcFace loss. Entry point: `src/pipeline.py` → preprocess → train (Lightning) → export. Uses NVIDIA DALI for GPU data loading.
+1. **1_adapter_training/** — "Teacher": Trains a MERT-v1-95M adapter with ArcFace loss. Entry point: `src/pipeline.py` → preprocess → train (Lightning) → export. Uses NVIDIA DALI for GPU data loading.
 
-2. **vector_index_pipeline/** — "Librarian": Consumes frozen `encoder.pt` as a black box. Entry point: `src/pipeline.py` → preprocess → index (inference) → build_index (merge shards into `audio_index.bin`).
+2. **2_vector_index/** — "Librarian": Consumes frozen `encoder.pt` as a black box. Entry point: `src/pipeline.py` → preprocess → index (inference) → build_index (merge shards into `audio_index.bin`).
 
-3. **meta_tokenizer_pipeline/** — BPE tokenizer (HuggingFace Tokenizers, 65k vocab, 16-bit tokens) for compressing song metadata. Imports from MusicBrainz, builds clustered range tables. Release artifacts are git-tracked.
+3. **3_meta_tokenizer/** — BPE tokenizer (HuggingFace Tokenizers, 65k vocab, 16-bit tokens) for compressing song metadata. Imports from MusicBrainz, builds clustered range tables. Release artifacts are git-tracked.
 
-4. **album_art_tokenizer_pipeline/** — VQ-VAE (1024 codebook, 10-bit) for visual hashing of album art into 320-byte records.
+4. **4_album_art/** — VQ-VAE (1024 codebook, 10-bit) for visual hashing of album art into 320-byte records.
 
 ### C++ Search Library (libmusicprint/)
 Static library (`musicprint_core.a`) targeting iOS, built with CMake/C++17. No external dependencies.
@@ -68,7 +68,7 @@ All binary files are little-endian, memory-mapped. Index header is 64 bytes foll
 
 ### Docker Volume Wiring
 - Training pipeline writes to `musicprint_training_processed` (Docker volume)
-- Indexing pipeline mounts that volume as external + mounts `adapter_training_pipeline/release` read-only at `/vol/model`
+- Indexing pipeline mounts that volume as external + mounts `1_adapter_training/release` read-only at `/vol/model`
 - Smoke tests use a `shared-fixtures` volume for fixture exchange between Python generator and C++ runner
 - Source audio lives in `music/` (gitignored), mounted read-only at `/vol/src_music`
 
@@ -76,6 +76,6 @@ All binary files are little-endian, memory-mapped. Index header is 64 bytes foll
 
 - All Python pipelines run inside `nvidia/pytorch:24.01-py3` containers (except meta_tokenizer which uses `python:3.10-slim`)
 - MERT model requires `trust_remote_code=True` for HuggingFace loading
-- ArcFace loss is in `adapter_training_pipeline/src/models/loss.py`
+- ArcFace loss is in `1_adapter_training/src/models/loss.py`
 - C++ tests are plain assertion-based (no framework), conditionally compiled when `NOT IOS`
 - `cli_search` is both a test harness and the reference implementation for the search algorithm

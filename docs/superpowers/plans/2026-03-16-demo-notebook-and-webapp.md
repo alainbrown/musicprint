@@ -331,7 +331,7 @@ git commit -m "feat(demo): add audio processing module with tests"
 
 Reads `music_meta.bin` (128-byte header, ISRC binary search, clustered range tables) and `music_decoder.bin` (BPE token → string). No dependency on the `tokenizers` library.
 
-Reference: `meta_tokenizer_pipeline/src/build_db.py:146-188` for binary layout, `meta_tokenizer_pipeline/src/export_vocab.py:39-51` for decoder layout.
+Reference: `3_meta_tokenizer/src/build_db.py:146-188` for binary layout, `3_meta_tokenizer/src/export_vocab.py:39-51` for decoder layout.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -1039,7 +1039,7 @@ env["WANDB_MODE"] = "disabled"
 result = subprocess.run(
     [
         sys.executable,
-        "adapter_training_pipeline/src/pipeline.py",
+        "1_adapter_training/src/pipeline.py",
         "--source_dir", MUSIC_DIR,
         "--data_dir", DATA_DIR,
         "--checkpoint_dir", CHECKPOINT_DIR,
@@ -1065,7 +1065,7 @@ INDEX_DIR = os.path.join(RELEASE_DIR, "index")
 result = subprocess.run(
     [
         sys.executable,
-        "vector_index_pipeline/src/pipeline.py",
+        "2_vector_index/src/pipeline.py",
         "--model_path", os.path.join(RELEASE_DIR, "encoder.pt"),
         "--source_dir", MUSIC_DIR,
         "--data_dir", DATA_DIR,
@@ -1091,7 +1091,7 @@ print(f"Index built: {count} entries, {index_size_mb:.1f} MB")
 # ## Step 3: Copy Metadata Artifacts
 
 # %%
-META_SRC = os.path.join(ROOT, "meta_tokenizer_pipeline", "release")
+META_SRC = os.path.join(ROOT, "3_meta_tokenizer", "release")
 for fname in ["music_meta.bin", "music_decoder.bin"]:
     src = os.path.join(META_SRC, fname)
     dst = os.path.join(RELEASE_DIR, fname)
@@ -1264,7 +1264,7 @@ Add two sections to the end of the README (before License):
 The `demo.ipynb` notebook trains, indexes, and verifies the full system from a `music/` folder. Run it inside the training pipeline container:
 
 ```bash
-cd adapter_training_pipeline
+cd 1_adapter_training
 docker compose up --build -d
 docker compose exec training-pipeline bash
 # Inside container:

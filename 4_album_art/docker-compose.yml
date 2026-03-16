@@ -5,7 +5,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./notebooks:/app/notebooks
-      - ../meta_tokenizer_pipeline/release:/vol/meta_release:ro
+      - ../3_meta_tokenizer/release:/vol/meta_release:ro
       - art-pipeline-data:/vol/data
       - art-pipeline-logs:/vol/logs
       - art-pipeline-checkpoints:/vol/checkpoints

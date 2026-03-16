@@ -10,8 +10,8 @@ int main() {
     musicprint::MetadataDatabase db;
     musicprint::BPEDecoder decoder;
     
-    const std::string meta_path = "../../meta_tokenizer_pipeline/release/music_meta.bin";
-    const std::string vocab_path = "../../meta_tokenizer_pipeline/release/music_decoder.bin";
+    const std::string meta_path = "../../3_meta_tokenizer/release/music_meta.bin";
+    const std::string vocab_path = "../../3_meta_tokenizer/release/music_decoder.bin";
 
     try {
         db.load(meta_path);

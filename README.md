@@ -34,13 +34,13 @@ The device gets five files: a CoreML encoder model, the binary hash index, the m
 
 The system is built from four independent pipelines with no shared code between them. They communicate only through file artifacts.
 
-**Adapter Training** (`adapter_training_pipeline/`) — Trains the MERT adapter with ArcFace loss. Takes MP3s, outputs `encoder.pt` (TorchScript) and `MusicPrintEncoder.mlpackage` (CoreML).
+**Adapter Training** (`1_adapter_training/`) — Trains the MERT adapter with ArcFace loss. Takes MP3s, outputs `encoder.pt` (TorchScript) and `MusicPrintEncoder.mlpackage` (CoreML).
 
-**Vector Indexing** (`vector_index_pipeline/`) — Loads the frozen encoder as a black box, runs inference on every song, binarizes the embeddings, and writes `audio_index.bin`.
+**Vector Indexing** (`2_vector_index/`) — Loads the frozen encoder as a black box, runs inference on every song, binarizes the embeddings, and writes `audio_index.bin`.
 
-**Meta Tokenizer** (`meta_tokenizer_pipeline/`) — Imports a MusicBrainz dump, trains a BPE tokenizer, encodes all metadata, and builds the binary lookup tables.
+**Meta Tokenizer** (`3_meta_tokenizer/`) — Imports a MusicBrainz dump, trains a BPE tokenizer, encodes all metadata, and builds the binary lookup tables.
 
-**Album Art Tokenizer** (`album_art_tokenizer_pipeline/`) — Trains a VQ-VAE on album covers and serializes them as 320-byte records.
+**Album Art Tokenizer** (`4_album_art/`) — Trains a VQ-VAE on album covers and serializes them as 320-byte records.
 
 ```
 music/ (MP3s)
@@ -61,14 +61,14 @@ Requires Docker, Docker Compose, and an NVIDIA GPU.
 
 **1. Train the encoder**
 ```bash
-cd adapter_training_pipeline
+cd 1_adapter_training
 docker compose up --build -d
 docker compose exec training-pipeline python src/pipeline.py
 ```
 
 **2. Build the index**
 ```bash
-cd vector_index_pipeline
+cd 2_vector_index
 docker compose up --build -d
 docker compose exec index-pipeline python src/pipeline.py --model_path /vol/model/encoder.pt
 ```

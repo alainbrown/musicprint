@@ -19,7 +19,7 @@ Runs inside the existing `musicprint-training` container (the training pipeline 
 Runs the adapter training pipeline as a subprocess, not via direct import. This avoids conflicts with WandB initialization, Lightning trainer event loops, and DALI GPU contexts inside the notebook kernel.
 
 ```bash
-WANDB_MODE=disabled python adapter_training_pipeline/src/pipeline.py \
+WANDB_MODE=disabled python 1_adapter_training/src/pipeline.py \
   --source_dir music/ \
   --data_dir /tmp/musicprint_data \
   --checkpoint_dir /tmp/musicprint_checkpoints \
@@ -33,7 +33,7 @@ Output: `release/encoder.pt` (TorchScript).
 Runs the vector index pipeline as a subprocess. This uses the existing windowing logic: each song is split into 5-second windows (120,000 samples at 24kHz) with 1-second stride, each window produces a separate binary hash, and all windows are written as entries in the index. A single song has multiple entries.
 
 ```bash
-python vector_index_pipeline/src/pipeline.py \
+python 2_vector_index/src/pipeline.py \
   --model_path release/encoder.pt \
   --source_dir music/ \
   --data_dir /tmp/musicprint_data \
@@ -44,7 +44,7 @@ Output: `release/audio_index.bin` (64-byte header + 16-byte entries: 8B hash + 8
 
 **Step 3 — Copy Metadata Artifacts**
 
-The metadata DB requires a MusicBrainz PostgreSQL instance, which is outside the scope of this demo. Instead, the notebook copies the pre-built artifacts from `meta_tokenizer_pipeline/release/` (which are git-tracked) into `release/`. These files are: `music_meta.bin` and `music_decoder.bin`. (The `music_encoder.json` tokenizer model is only needed at build time by `build_db.py` and is not copied.)
+The metadata DB requires a MusicBrainz PostgreSQL instance, which is outside the scope of this demo. Instead, the notebook copies the pre-built artifacts from `3_meta_tokenizer/release/` (which are git-tracked) into `release/`. These files are: `music_meta.bin` and `music_decoder.bin`. (The `music_encoder.json` tokenizer model is only needed at build time by `build_db.py` and is not copied.)
 
 **Step 4 — Clean Verification**
 

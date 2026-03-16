@@ -8,7 +8,7 @@ import numpy as np
 
 # Paths
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-AUDIO_PIPE = os.path.join(ROOT, "adapter_training_pipeline")
+AUDIO_PIPE = os.path.join(ROOT, "1_adapter_training")
 LIB_ROOT = os.path.join(ROOT, "libmusicprint")
 CLI_BIN = os.path.join(LIB_ROOT, "build/cli_search")
 
@@ -21,8 +21,8 @@ INDEX_BIN = os.path.join(FIXTURE_DIR, "index.bin")
 CENTROIDS_BIN = os.path.join(FIXTURE_DIR, "centroids.bin")
 
 # Production Paths
-META_BIN = os.path.join(ROOT, "meta_tokenizer_pipeline/release/music_meta.bin")
-VOCAB_BIN = os.path.join(ROOT, "meta_tokenizer_pipeline/release/music_decoder.bin")
+META_BIN = os.path.join(ROOT, "3_meta_tokenizer/release/music_meta.bin")
+VOCAB_BIN = os.path.join(ROOT, "3_meta_tokenizer/release/music_decoder.bin")
 
 # Target
 TARGET_ISRC = "GBAYE0601498" # Yellow Submarine

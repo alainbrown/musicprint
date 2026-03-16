@@ -13,10 +13,10 @@ services:
       - ./notebooks:/app/notebooks
       - ./release:/app/release
       # Mount the release folder from the training pipeline to access the model
-      - ../adapter_training_pipeline/release:/vol/model:ro
+      - ../1_adapter_training/release:/vol/model:ro
       - ../music:/vol/src_music:ro
       # Reuse processed data from training pipeline
-      - adapter_training_pipeline_musicprint_training_processed:/vol/data
+      - 1_adapter_training_musicprint_training_processed:/vol/data
       - musicprint_index_cache:/vol/cache
     deploy:
       resources:
@@ -32,6 +32,6 @@ services:
 
 volumes:
   # Reference the external volume created by the other pipeline
-  adapter_training_pipeline_musicprint_training_processed:
+  1_adapter_training_musicprint_training_processed:
     external: true
   musicprint_index_cache:

@@ -38,7 +38,7 @@ services:
     working_dir: /workspace/libmusicprint
     # We install cmake, build the CLI tool, and run it
     command: >
-      bash -c "apt-get update && apt-get install -y cmake && mkdir -p build && cd build && cmake .. && make cli_search && ./cli_search /fixtures/query.bin /fixtures/index.bin /workspace/meta_tokenizer_pipeline/release/music_meta.bin /workspace/meta_tokenizer_pipeline/release/music_decoder.bin"
+      bash -c "apt-get update && apt-get install -y cmake && mkdir -p build && cd build && cmake .. && make cli_search && ./cli_search /fixtures/query.bin /fixtures/index.bin /workspace/3_meta_tokenizer/release/music_meta.bin /workspace/3_meta_tokenizer/release/music_decoder.bin"
 
 volumes:
   shared-fixtures:
