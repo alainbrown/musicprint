@@ -32,15 +32,16 @@ class TorchScriptWrapper(pl.LightningModule):
             if audio.shape[0] < 120000: continue
             windows = audio.unfold(0, 120000, 24000) 
             
+            # Process windows in chunks to avoid OOM on long tracks
+            CHUNK = 32
+            all_packed = []
             with torch.no_grad():
-                embeddings = self.model(windows)
-            
-            # Binarize: (N, 64) -> (N, 8) uint8
-            # 1. Threshold at 0
-            bits = (embeddings > 0).cpu().numpy().astype(np.uint8)
-            # 2. Pack into bytes
-            # We use 'little' to match struct.unpack('<Q') later
-            packed = np.packbits(bits, axis=1, bitorder='little')
+                for start in range(0, len(windows), CHUNK):
+                    chunk = windows[start : start + CHUNK]
+                    emb = self.model(chunk)
+                    bits = (emb > 0).cpu().numpy().astype(np.uint8)
+                    all_packed.append(np.packbits(bits, axis=1, bitorder='little'))
+            packed = np.concatenate(all_packed, axis=0)
             
             results.append({
                 "id": song_id,
