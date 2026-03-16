@@ -27,6 +27,7 @@ def main(args):
         dirpath=args.checkpoint_dir,
         filename='mert-adapter-{epoch:02d}-{val_loss:.2f}',
         save_top_k=3,
+        save_last=True,
         monitor='val_loss',
         mode='min'
     )
