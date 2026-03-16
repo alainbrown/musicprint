@@ -30,7 +30,9 @@ RUN pip install --no-cache-dir \
     tokenizers \
     psycopg2-binary \
     sqlalchemy \
-    tqdm
+    tqdm \
+    pydub \
+    flask
 
 WORKDIR /app
 
