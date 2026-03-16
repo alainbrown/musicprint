@@ -4,7 +4,7 @@ from pytorch_metric_learning import losses, miners
 from .mert_adapter import MERTAdapter
 
 class MusicArcFaceSystem(nn.Module):
-    def __init__(self, num_classes, embedding_dim=64, margin=28.6, scale=64):
+    def __init__(self, num_classes, embedding_dim=768, margin=0.5, scale=64):
         """
         ArcFace System for Music Fingerprinting.
         

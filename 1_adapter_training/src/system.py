@@ -6,7 +6,7 @@ from models.arcface import MusicArcFaceSystem
 import os
 
 class MusicPrintSystem(pl.LightningModule):
-    def __init__(self, num_classes, lr=1e-4, output_dim=64):
+    def __init__(self, num_classes, lr=1e-4, output_dim=768):
         super().__init__()
         self.save_hyperparameters()
         
