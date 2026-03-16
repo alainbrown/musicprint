@@ -17,11 +17,7 @@ class TorchScriptWrapper(pl.LightningModule):
         return self.model(x)
 
     def predict_step(self, batch, batch_idx):
-        # Implementation using JIT model
-        # Batch is (B, Time, 1)
-        data_dict = batch[0]
-        audio_batch = data_dict["audio"]
-        labels = data_dict["label"]
+        audio_batch, labels = batch
         
         if audio_batch.dim() == 3:
             audio_batch = audio_batch.squeeze(-1)
