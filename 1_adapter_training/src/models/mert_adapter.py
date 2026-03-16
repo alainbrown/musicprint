@@ -12,7 +12,11 @@ class MERTAdapter(nn.Module):
             param.requires_grad = False
 
         # MERT-v1-95M hidden size is 768
-        self.adapter = nn.Linear(768, output_dim)
+        self.adapter = nn.Sequential(
+            nn.Linear(768, 768),
+            nn.ReLU(),
+            nn.Linear(768, output_dim),
+        )
 
     def forward(self, audio_tensors):
         """
