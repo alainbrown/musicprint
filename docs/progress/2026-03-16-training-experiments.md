@@ -129,20 +129,25 @@ Rationale for contrastive loss as baseline: ArcFace adds complexity (stateful we
 - **Key result**: Massive improvement in diff-song separation (-0.18 vs 0.81-0.90 in previous runs)
 - **Caveat**: Old test method, only 5 songs. Need proper full-index recall test to validate.
 
-### Next: Run 6 — Frozen MERT baseline (no adapter, proper recall test)
-- **Status**: Not yet run
-- **Goal**: Determine if MERT's raw representations are already good enough
-- **Setup**: No adapter (Identity or just mean pool), no training
-- **Test**: Proper full-index recall test
-  - Index all windows from 5 songs (~875 vectors)
-  - Query ~88 random clips (10% of windows)
-  - Search nearest neighbor across full index
-  - Report top-1 recall
-- **Why**: If frozen MERT gets high recall, the adapter training may be unnecessary for basic fingerprinting. This establishes the true baseline.
+### Run 6: Frozen MERT baseline (no adapter, proper recall test)
+- 5 songs, **no training**, frozen MERT + mean pool, no adapter
+- Proper full-index recall test:
+  - Indexed 897 windows from 5 songs (avg 179 windows/song)
+  - Queried 89 random windows (10% of index)
+  - Nearest neighbor search across full index
+- **Top-1 recall: 89/89 (100.0%)**
+- **Key finding**: MERT's raw pretrained representations are already discriminative enough for song fingerprinting on 5 songs with zero fine-tuning.
+- **Implication**: The adapter training in Runs 1-5 may have been unnecessary. The poor recall in Runs 2-4 was due to the flawed test method (2 clips per song), not the encoder quality.
+- **Open question**: Does this hold at scale (100, 1000, 6966 songs)?
 
-### Next: Run 7 — Trained adapter with proper recall test
+### Next: Run 7 — Frozen MERT at 100 songs
 - **Status**: Not yet run
-- **Goal**: Measure improvement from adapter training over frozen MERT
-- **Setup**: Same as Run 5 (MLP adapter, contrastive loss, full-song training)
-- **Test**: Same proper full-index recall test as Run 6
-- **Comparison**: Run 7 recall vs Run 6 recall shows the value of adapter training
+- **Goal**: Test if frozen MERT recall holds with more songs
+- **Setup**: Same as Run 6 (frozen MERT, no training)
+- **Test**: Full-index recall on 100 songs
+
+### Next: Run 8 — Trained adapter at 100 songs (if needed)
+- **Status**: Not yet run
+- **Goal**: Only run if Run 7 shows degraded recall — test if adapter training helps at scale
+- **Setup**: MLP adapter, contrastive loss, full-song training
+- **Test**: Full-index recall on 100 songs, compare to Run 7
