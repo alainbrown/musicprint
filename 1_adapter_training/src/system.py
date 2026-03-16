@@ -26,8 +26,8 @@ class MusicPrintSystem(pl.LightningModule):
         # ArcFace treats views as independent samples of the class
         a1 = data_dict["audio_1"]
         a2 = data_dict["audio_2"]
-        labels = data_dict["label"].squeeze().long()
-        
+        labels = data_dict["label"].reshape(-1).long()
+
         # Concatenate: [B, T] + [B, T] -> [2*B, T]
         audio = torch.cat([a1, a2], dim=0)
         # Duplicate labels: [B] -> [2*B]
@@ -58,8 +58,8 @@ class MusicPrintSystem(pl.LightningModule):
         else:
             raise KeyError(f"Batch keys {data_dict.keys()} do not contain 'audio' or 'audio_1'")
             
-        labels = data_dict["label"].squeeze().long()
-        
+        labels = data_dict["label"].reshape(-1).long()
+
         if audio.dim() == 3:
             audio = audio.squeeze(-1)
             
