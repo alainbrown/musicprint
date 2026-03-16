@@ -1,6 +1,9 @@
 services:
   art-tokenizer:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.pipeline
+    image: musicprint-pipeline:latest
     container_name: musicprint-art-tokenizer
     volumes:
       - ./src:/app/src

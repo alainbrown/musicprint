@@ -1,9 +1,9 @@
 services:
   tokenizer:
     build:
-      context: .
-      dockerfile: Dockerfile
-    image: musicprint-tokenizer:latest
+      context: ..
+      dockerfile: docker/Dockerfile.pipeline
+    image: musicprint-pipeline:latest
     container_name: musicprint-tokenizer
     ports:
       - "8889:8888" # Jupyter Lab

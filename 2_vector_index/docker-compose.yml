@@ -1,9 +1,9 @@
 services:
   index-pipeline:
     build:
-      context: .
-      dockerfile: Dockerfile
-    image: musicprint-index:latest
+      context: ..
+      dockerfile: docker/Dockerfile.pipeline
+    image: musicprint-pipeline:latest
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
