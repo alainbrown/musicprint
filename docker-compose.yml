@@ -146,6 +146,30 @@ services:
     shm_size: '8gb'
     command: python scripts/verify.py
 
+  verify-quick:
+    image: musicprint-pipeline:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - HF_HOME=/vol/cache/huggingface
+      - WANDB_MODE=disabled
+    volumes:
+      - .:/workspace
+      - musicprint_data:/vol/data
+      - musicprint_checkpoints:/vol/checkpoints
+      - musicprint_cache:/vol/cache
+    working_dir: /workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: '8gb'
+    command: python scripts/verify.py --max_songs 200
+
   demo:
     build:
       context: .

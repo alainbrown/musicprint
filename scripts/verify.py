@@ -143,7 +143,26 @@ def run_step(name, cmd):
         sys.exit(1)
 
 
+def create_subset(track_paths, max_songs, music_dir):
+    """Create a temp directory with symlinks to a random subset of songs."""
+    import tempfile
+    subset_dir = tempfile.mkdtemp(prefix="musicprint_subset_")
+    random.seed(42)
+    selected = random.sample(track_paths, min(max_songs, len(track_paths)))
+    for path in selected:
+        rel = os.path.relpath(path, music_dir)
+        link = os.path.join(subset_dir, rel)
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        os.symlink(path, link)
+    return subset_dir
+
+
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--max_songs", type=int, default=0, help="Limit to N songs (0 = all)")
+    args = parser.parse_args()
+
     print("=" * 60)
     print("  MUSICPRINT END-TO-END VERIFICATION")
     print("=" * 60)
@@ -155,12 +174,19 @@ def main():
         sys.exit(1)
     print(f"Found {len(track_paths)} tracks in music/")
 
+    # Optional subset
+    source_dir = MUSIC_DIR
+    if args.max_songs > 0 and args.max_songs < len(track_paths):
+        source_dir = create_subset(track_paths, args.max_songs, MUSIC_DIR)
+        track_paths, track_ids = discover_tracks(source_dir)
+        print(f"Using subset of {len(track_paths)} tracks for quick verification")
+
     # Step 1: Train encoder
     env = os.environ.copy()
     env["WANDB_MODE"] = "disabled"
     run_step("Step 1: Train Encoder", [
         sys.executable, "1_adapter_training/src/pipeline.py",
-        "--source_dir", MUSIC_DIR,
+        "--source_dir", source_dir,
         "--data_dir", DATA_DIR,
         "--checkpoint_dir", CHECKPOINT_DIR,
         "--release_dir", RELEASE_DIR,
@@ -175,7 +201,7 @@ def main():
     run_step("Step 2: Build Index", [
         sys.executable, "2_vector_index/src/pipeline.py",
         "--model_path", encoder_path,
-        "--source_dir", MUSIC_DIR,
+        "--source_dir", source_dir,
         "--data_dir", DATA_DIR,
         "--index_dir", index_dir,
     ])
