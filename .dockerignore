@@ -3,6 +3,7 @@ music/
 *.pt
 *.ckpt
 *.pth
-*.mlpackage
+**/*.mlpackage
+**/*.mlpackage/
 __pycache__/
 libmusicprint/build/
