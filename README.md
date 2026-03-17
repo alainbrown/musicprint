@@ -18,10 +18,27 @@ On a corpus of 6,839 songs (Billboard Hot 100, 1920–2020s):
 
 ## How It Works
 
-1. **Encode**: MERT-v1-95M (frozen, 95M params) takes a 5-second audio clip at 24kHz and produces a 768-dim embedding via mean pooling.
-2. **Index**: Each song is split into overlapping 5-second windows. The ~175 window embeddings are clustered to 10 centroids via k-means.
-3. **Compress**: PCA reduces 768 dims to 256. Sign-bit binarization produces a 256-bit hash per centroid.
-4. **Search**: Query clip → encode → PCA → binarize → nearest neighbor by Hamming distance.
+### Indexing a song
+
+```mermaid
+graph TD
+    A["Song (3 min audio)"] --> B["Split into 5s windows\n175 overlapping clips, 1s stride"]
+    B --> C["MERT-v1-95M (frozen)\nmean pool → 768-dim"]
+    C -->|"175 × 768-dim vectors"| D["K-means (k=10)\nkeep 10 representative centroids"]
+    D -->|"10 × 768-dim vectors"| E["PCA (768 → 256 dims)\nremove noise dimensions"]
+    E -->|"10 × 256-dim vectors"| F["Binary hash (sign bits)\npositive → 1, negative → 0"]
+    F -->|"10 × 32 bytes = 320 bytes/song"| G[("Index")]
+```
+
+### Searching for a song
+
+```mermaid
+graph TD
+    A["Phone mic (5s recording)"] --> B["MERT-v1-95M (frozen)\nmean pool → 768-dim"]
+    B -->|"1 × 768-dim vector"| C["PCA (768 → 256 dims)\nBinary hash (sign bits)"]
+    C -->|"1 × 256-bit query"| D["Cosine similarity search\nacross all song hashes"]
+    D --> E["Song match"]
+```
 
 ## Running the Experiments
 

@@ -56,6 +56,30 @@ The full index (175 windows × 768 floats per song) is too large for mobile depl
 
 At query time, the same PCA projection and sign-bit binarization are applied to the query embedding before searching.
 
+### 3.5 System Overview
+
+**Indexing pipeline:**
+
+```mermaid
+graph TD
+    A["Song (3 min audio)"] --> B["Split into 5s windows\n~175 overlapping clips, 1s stride"]
+    B --> C["MERT-v1-95M (frozen)\nmean pool → 768-dim"]
+    C -->|"175 × 768-dim"| D["K-means (k=10)\n175 → 10 centroids"]
+    D -->|"10 × 768-dim"| E["PCA\n768 → 256 dims"]
+    E -->|"10 × 256-dim"| F["Sign-bit hash\n256 floats → 256 bits"]
+    F -->|"320 bytes/song"| G[("Index")]
+```
+
+**Query pipeline:**
+
+```mermaid
+graph TD
+    A["5s audio clip"] --> B["MERT-v1-95M → 768-dim"]
+    B --> C["PCA → 256-dim → sign-bit hash"]
+    C -->|"256-bit query"| D["Cosine similarity\nacross all stored hashes"]
+    D --> E["Song ID"]
+```
+
 ## 4. Experiments
 
 ### 4.1 Dataset
@@ -108,6 +132,26 @@ All runs: 6,839 songs, k-means k=10, 68,390 queries (10/song).
 At full corpus scale, baseline recall is 96.6% (down from 100% at 100 songs). The most notable result is that **PCA 256 + binary hashing achieves 96.5% recall — essentially matching the uncompressed baseline — at 320 bytes per song**. This is a 96× storage reduction with negligible recall loss. At 10 million songs, this configuration requires approximately 3 GB — meeting the mobile storage target.
 
 Binary hashing after PCA 256 (96.5%) slightly outperforms binary hashing without PCA (95.1%), suggesting that PCA removes noise dimensions that hurt binarization. However, at PCA 128 and below, recall drops more steeply (92.0%, 75.5%), indicating that 256 principal components capture a critical threshold of discriminative information.
+
+**Figure 1: Recall vs storage per song (6,839 songs, k=10 centroids)**
+
+```mermaid
+xychart-beta
+    title "Recall vs Storage Per Song"
+    x-axis "Storage per song" ["80 B", "160 B", "320 B", "960 B", "2.5 KB", "5 KB", "10 KB", "30 KB"]
+    y-axis "Top-1 Recall (%)" 70 --> 100
+    bar [75.5, 92.0, 96.5, 95.1, 93.0, 95.3, 96.1, 96.6]
+```
+
+**Figure 2: Recall vs corpus size (k=10 centroids, 768-dim float32)**
+
+```mermaid
+xychart-beta
+    title "Recall vs Corpus Size"
+    x-axis "Number of songs" ["5", "97", "6839"]
+    y-axis "Top-1 Recall (%)" 90 --> 100
+    line [100, 100, 96.6]
+```
 
 ## 6. Discussion
 
