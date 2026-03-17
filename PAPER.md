@@ -24,7 +24,7 @@ Our target deployment is a mobile device (iPhone 13+) with a storage budget unde
 
 ## 3. Method
 
-### 2.1 Encoder
+### 3.1 Encoder
 
 We use MERT-v1-95M (Music Enhanced Representation Transformer), a HuBERT-based model pretrained on music audio at 24 kHz. The model has 95 million parameters across 12 transformer layers with a hidden dimension of 768.
 
@@ -36,15 +36,15 @@ Given a 5-second audio clip (120,000 samples at 24 kHz):
 
 This produces a single 768-dimensional embedding vector per 5-second window.
 
-### 2.2 Indexing
+### 3.2 Indexing
 
 Each song is segmented into overlapping 5-second windows with a 1-second stride. A 3-minute song produces approximately 175 windows. Each window is encoded independently, producing a set of embedding vectors per song.
 
-### 2.3 Search
+### 3.3 Search
 
 Given a query clip (5 seconds of audio), we encode it using the same pipeline and find the nearest embedding in the index by cosine similarity. The song associated with the nearest embedding is returned as the match.
 
-### 2.4 Compression Pipeline
+### 3.4 Compression Pipeline
 
 The full index (175 windows × 768 floats per song) is too large for mobile deployment. We apply three compression stages:
 
@@ -82,26 +82,15 @@ Queries are random window embeddings that do not appear in the index, ensuring t
 
 ## 5. Results
 
-### 6.1 Development Results (100-Song Subset)
+### 5.1 Development (100-Song Subset)
 
-Initial experiments on 97 songs validated the approach and tuned parameters.
+We used a 97-song subset to validate the pipeline and select compression parameters before running the full corpus. Key findings from development:
 
-**Baseline (no compression):** 100% recall with full index (206 windows/song) confirmed that frozen MERT embeddings are inherently discriminative.
+- Frozen MERT with no compression achieved 100% recall, confirming that the pretrained representations are inherently discriminative for song identification.
+- K-means segment clustering was tested at k=1, 3, 5, and 10. At k=10, recall remained at 100% while reducing embeddings per song from ~206 to 10 — a 20× reduction. We selected k=10 as the segment reduction strategy.
+- Initial fine-tuning experiments (ArcFace loss, contrastive loss, various adapter architectures) did not improve over frozen MERT, leading us to abandon fine-tuning entirely.
 
-**Segment count reduction:**
-
-| Strategy | Embeddings/song | Storage/song | Top-1 Recall |
-|----------|----------------|-------------|-------------|
-| Baseline (1s stride) | 206 | 632 KB | 100.0% |
-| 5s stride | 43 | 129 KB | 99.7% |
-| K-means k=10 | 10 | 30 KB | 100.0% |
-| K-means k=5 | 5 | 15 KB | 99.4% |
-| K-means k=3 | 3 | 9 KB | 97.9% |
-| K-means k=1 | 1 | 3 KB | 93.2% |
-
-K-means k=10 was selected as the segment reduction strategy (perfect recall at 20× reduction). Dimensionality reduction experiments on the 100-song subset showed promising results but are superseded by the full corpus experiments below.
-
-### 6.2 Full Corpus Results (6,839 Songs)
+### 5.2 Full Corpus Results (6,839 Songs)
 
 All runs: 6,839 songs, k-means k=10, 68,390 queries (10/song).
 
