@@ -2,7 +2,7 @@
 
 > Offline music recognition on a phone. 10 million songs, under 3GB, no server.
 
-MusicPrint is an experiment to see if a complete Shazam-like system can run entirely on a mobile device. The key finding: a frozen pretrained audio model (MERT-v1-95M) produces embeddings discriminative enough for song identification with no fine-tuning. Combined with k-means clustering, PCA, and binary hashing, the index compresses to 320 bytes per song — 3 GB for 10 million songs. For comparison, spectrogram-based approaches like Shazam typically require 8–24 KB per song.
+MusicPrint is an experiment to see if a complete Shazam-like system can run entirely on a mobile device. The key finding: a frozen pretrained audio model (MERT-v1-95M) produces embeddings discriminative enough for song identification with no fine-tuning. Combined with k-means clustering, PCA, and binary hashing, the index compresses to 320 bytes per song — 3 GB for 10 million songs. For comparison, spectrogram-based approaches like Shazam typically require 8–24 KB per song, a 25-75x savings.
 
 [**Try the demo**](https://huggingface.co/spaces/alainbrown/musicprint) · [Paper](PAPER.md) · [Dataset](https://huggingface.co/datasets/alainbrown/musicprint-embeddings)
 
