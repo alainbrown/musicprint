@@ -232,7 +232,28 @@ At 100M songs with k=10 and 768-dim float32: 30 KB × 100M = ~3 TB. Still too la
 | k=10 + PCA128 + binary | 160 B | 99.3% | 16 GB | Possible |
 | k=10 + PCA64 + binary | 80 B | 96.7% | 8 GB | Yes |
 
-The target was <3 GB. At 80 bytes/song (k=10, PCA 64, binary), 100M songs = 8 GB — still above target. Options:
-- Reduce k from 10 to 5 (halves storage): k=5 + PCA64 + binary = ~40 bytes/song = 4 GB
-- Reduce k to 3: ~24 bytes/song = 2.4 GB (within target)
-- Accept fewer songs or slightly larger storage
+The target was <3 GB. At 80 bytes/song (k=10, PCA 64, binary), 100M songs = 8 GB — still above target at 100-song scale.
+
+---
+
+### Full Corpus Results (6,839 songs)
+
+Encoding took 349 minutes (~5.8 hours) on RTX 2000 Ada. 127 songs skipped due to decode errors. 68,390 queries (10 per song).
+
+| Strategy | Dims | Storage/song | Top-1 Recall | @ 100M songs |
+|----------|------|-------------|-------------|-------------|
+| Float32 768-dim | 768 | 30 KB | 96.6% | 2,861 GB |
+| PCA 256 float32 | 256 | 10 KB | 96.1% | 954 GB |
+| PCA 128 float32 | 128 | 5 KB | 95.3% | 477 GB |
+| PCA 64 float32 | 64 | 2.5 KB | 93.0% | 238 GB |
+| Binary 768-bit | 768 | 960 B | 95.1% | 89 GB |
+| **Binary 256-bit (PCA)** | **256** | **320 B** | **96.5%** | **30 GB** |
+| Binary 128-bit (PCA) | 128 | 160 B | 92.0% | 15 GB |
+| Binary 64-bit (PCA) | 64 | 80 B | 75.5% | 7.5 GB |
+
+**Key findings at scale:**
+- Baseline recall dropped from 100% (100 songs) to 96.6% (6,839 songs) — expected crowding
+- **PCA 256 + binary (320 B/song) achieves 96.5% — essentially matching uncompressed baseline** at 96× storage reduction
+- PCA 256 + binary (96.5%) outperforms raw binary 768-bit (95.1%) — PCA removes noise dimensions that hurt binarization
+- Sharp degradation below 256 PCA dims: 128-bit drops to 92.0%, 64-bit to 75.5%
+- Sweet spot: **320 bytes/song, 96.5% recall, 30 GB @ 100M songs**
