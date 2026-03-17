@@ -14,7 +14,6 @@ services:
       - PYTHONPATH=/app/src
     volumes:
       - ./1_adapter_training/src:/app/src
-      - ./1_adapter_training/notebooks:/app/notebooks
       - ./1_adapter_training/release:/vol/release
       - ./music:/vol/src_music:ro
       - musicprint_data:/vol/data
@@ -44,7 +43,6 @@ services:
       - PYTHONPATH=/app/src
     volumes:
       - ./2_vector_index/src:/app/src
-      - ./2_vector_index/notebooks:/app/notebooks
       - ./2_vector_index/release:/app/release
       - ./1_adapter_training/release:/vol/model:ro
       - ./music:/vol/src_music:ro
@@ -122,54 +120,6 @@ services:
     tty: true
     command: tail -f /dev/null
 
-  verify:
-    image: musicprint-pipeline:latest
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - HF_HOME=/vol/cache/huggingface
-      - WANDB_MODE=disabled
-    volumes:
-      - ./music:/vol/music:ro
-      - musicprint_data:/vol/data
-      - musicprint_checkpoints:/vol/checkpoints
-      - musicprint_cache:/vol/cache
-      - musicprint_artifacts:/vol/artifacts
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    shm_size: '8gb'
-    command: python scripts/verify.py
-
-  verify-quick:
-    image: musicprint-pipeline:latest
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - HF_HOME=/vol/cache/huggingface
-      - WANDB_MODE=disabled
-    volumes:
-      - ./music:/vol/music:ro
-      - musicprint_data:/vol/data
-      - musicprint_checkpoints:/vol/checkpoints
-      - musicprint_cache:/vol/cache
-      - musicprint_artifacts:/vol/artifacts
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    shm_size: '8gb'
-    command: python scripts/verify.py --max_songs 5
-
   demo:
     build:
       context: .
@@ -186,5 +136,4 @@ volumes:
   musicprint_logs:
   musicprint_checkpoints:
   musicprint_cache:
-  musicprint_artifacts:
   mb_pgdata:
