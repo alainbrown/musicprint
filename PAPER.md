@@ -12,7 +12,17 @@ We ask a simple question: can a frozen pretrained audio model, with no task-spec
 
 Our target deployment is a mobile device (iPhone 13+) with a storage budget under 3 GB for a 10-million-song database. This requires aggressive compression of the embedding space while preserving retrieval accuracy.
 
-## 2. Method
+## 2. Related Work
+
+**Traditional audio fingerprinting.** Shazam (Wang, 2003) extracts spectrogram peaks and matches combinatorial landmark pairs. This approach is fast and robust to noise but requires a purpose-built feature extraction pipeline. Chromaprint/AcoustID uses chroma features for music identification. These systems do not use learned representations.
+
+**Neural audio fingerprinting.** Chang et al. (2021) proposed a neural audio fingerprint learning framework that trains a compact encoder using contrastive learning on augmented audio segments. Their system learns 128-dim embeddings optimized for fingerprinting, achieving high recall under noise and compression. Unlike our approach, it requires task-specific training with carefully designed augmentations.
+
+**Self-supervised audio models.** MERT (Li et al., 2023) is a music-domain self-supervised model based on HuBERT, pretrained with both acoustic and musical tokens. Other models in this family include Wav2Vec2 (Baevski et al., 2020), HuBERT (Hsu et al., 2021), and CLAP (Wu et al., 2023). These models produce general-purpose audio representations but have not been systematically evaluated for fingerprinting tasks.
+
+**Our contribution.** We show that frozen MERT representations, with no task-specific training, are sufficient for song identification. This reduces neural audio fingerprinting to a compression problem — how to store and search the embeddings efficiently — rather than a representation learning problem.
+
+## 3. Method
 
 ### 2.1 Encoder
 
@@ -40,23 +50,23 @@ The full index (175 windows × 768 floats per song) is too large for mobile depl
 
 **Stage 1: Segment clustering.** We apply k-means clustering to each song's window embeddings and retain only the k cluster centroids. This exploits the redundancy in songs — repeated choruses, sustained sections, and similar passages produce near-identical embeddings. Reducing from ~175 to 10 embeddings per song yields a 17.5× reduction.
 
-**Stage 2: Dimensionality reduction.** We fit PCA on the full set of index embeddings and project from 768 dimensions to a lower target (64 or 128). This captures the principal axes of variation while discarding noise dimensions.
+**Stage 2: Dimensionality reduction.** We fit PCA on the full set of index embeddings and project from 768 dimensions to a lower target (64, 128, or 256). This captures the principal axes of variation while discarding noise dimensions.
 
 **Stage 3: Binary hashing.** We take the sign of each dimension (positive → 1, negative → 0) to produce a binary hash. Search uses Hamming distance (equivalent to dot product on {-1, +1} vectors). This reduces each embedding from D × 4 bytes (float32) to D/8 bytes.
 
 At query time, the same PCA projection and sign-bit binarization are applied to the query embedding before searching.
 
-## 3. Experiments
+## 4. Experiments
 
-### 3.1 Dataset
+### 4.1 Dataset
 
 We use a collection of 6,966 songs from the Billboard Hot 100 archives spanning 1920 to the 2020s, covering a wide range of genres, recording qualities, and production styles. Songs are stored as MP3 files. 127 songs were excluded due to decode errors, leaving 6,839 songs in the full test set. A 100-song subset (97 after decode errors) was used for initial development.
 
-### 3.2 Hardware
+### 4.2 Hardware
 
 All experiments run on a single NVIDIA RTX 2000 Ada Generation GPU (16 GB VRAM) inside a Docker container based on NVIDIA's PyTorch 24.01 image. Encoding the full corpus took 349 minutes (~5.8 hours).
 
-### 3.3 Evaluation Protocol
+### 4.3 Evaluation Protocol
 
 We evaluate top-1 recall using a full-index search:
 
@@ -70,9 +80,9 @@ We evaluate top-1 recall using a full-index search:
 
 Queries are random window embeddings that do not appear in the index, ensuring the test reflects real conditions where a user's recording won't exactly match any stored embedding.
 
-## 4. Results
+## 5. Results
 
-### 4.1 Development Results (100-Song Subset)
+### 6.1 Development Results (100-Song Subset)
 
 Initial experiments on 97 songs validated the approach and tuned parameters.
 
@@ -89,18 +99,9 @@ Initial experiments on 97 songs validated the approach and tuned parameters.
 | K-means k=3 | 3 | 9 KB | 97.9% |
 | K-means k=1 | 1 | 3 KB | 93.2% |
 
-K-means k=10 was selected as the segment reduction strategy (perfect recall at 20× reduction).
+K-means k=10 was selected as the segment reduction strategy (perfect recall at 20× reduction). Dimensionality reduction experiments on the 100-song subset showed promising results but are superseded by the full corpus experiments below.
 
-**Dimensionality reduction (100 songs, k=10):**
-
-| Strategy | Storage/song | Top-1 Recall | @ 10M songs |
-|----------|-------------|-------------|-------------|
-| Float32 768-dim | 30 KB | 100.0% | 286 GB |
-| Binary 768-bit | 960 B | 99.8% | 9.0 GB |
-| PCA 128 + binary | 160 B | 99.3% | 1.5 GB |
-| PCA 64 + binary | 80 B | 96.7% | 0.7 GB |
-
-### 4.2 Full Corpus Results (6,839 Songs)
+### 6.2 Full Corpus Results (6,839 Songs)
 
 All runs: 6,839 songs, k-means k=10, 68,390 queries (10/song).
 
@@ -119,13 +120,13 @@ At full corpus scale, baseline recall is 96.6% (down from 100% at 100 songs). Th
 
 Binary hashing after PCA 256 (96.5%) slightly outperforms binary hashing without PCA (95.1%), suggesting that PCA removes noise dimensions that hurt binarization. However, at PCA 128 and below, recall drops more steeply (92.0%, 75.5%), indicating that 256 principal components capture a critical threshold of discriminative information.
 
-## 5. Discussion
+## 6. Discussion
 
-### 5.1 Why Frozen MERT Works
+### 6.1 Why Frozen MERT Works
 
 MERT was pretrained on music audio using a self-supervised objective that captures acoustic structure at multiple temporal scales. Its representations encode timbre, rhythm, harmonic content, and temporal dynamics — properties that are inherently song-specific. Different 5-second windows from the same song share these properties, while windows from different songs differ in at least some dimensions. This makes cosine similarity a natural distance metric for fingerprinting without any task-specific training.
 
-### 5.2 Failed Approaches
+### 6.2 Failed Approaches
 
 Before discovering that frozen MERT sufficed, we attempted several fine-tuning approaches:
 
@@ -135,7 +136,7 @@ Before discovering that frozen MERT sufficed, we attempted several fine-tuning a
 
 When we corrected the evaluation to use full-index search, frozen MERT without any adapter achieved 100% recall, revealing that the training was unnecessary and the poor earlier results were artifacts of the evaluation methodology.
 
-### 5.3 Compression Efficiency
+### 6.3 Compression Efficiency
 
 The k-means clustering stage is highly effective because songs contain significant temporal redundancy. A typical pop song repeats its chorus 3-4 times, and sustained instrumental sections produce near-identical embeddings. Reducing from ~200 to 10 embeddings per song costs no recall at 100 songs and only 3.4% at 6,839 songs.
 
@@ -143,20 +144,20 @@ PCA to 256 dimensions preserves nearly all discriminative information (96.1% rec
 
 Below 256 dimensions, recall degrades more steeply: PCA 128 + binary drops to 92.0%, and PCA 64 + binary to 75.5%. This indicates that approximately 256 principal components are needed to capture the critical discriminative structure.
 
-### 5.4 Scaling Behavior
+### 6.4 Scaling Behavior
 
-Recall decreases with corpus size: 100% at 5 songs, 100% at 97 songs, 96.6% at 6,839 songs. This is expected — as more songs are added, the embedding space becomes more crowded and nearest-neighbor errors increase. The 3.4% drop from 97 to 6,839 songs is modest, but extrapolating to 10 million songs would likely produce further degradation. Quantifying this scaling curve is critical for production deployment.
+At 100 songs with k=10 centroids, recall was 100%. At 6,839 songs with k=10 centroids, recall dropped to 96.6%. Note that the 100-song result used a different evaluation protocol (queries drawn from full 1s-stride windows) while the full corpus used separate query windows, so the comparison is approximate. Nonetheless, the trend is clear: recall degrades as the corpus grows and the embedding space becomes more crowded. Quantifying this scaling curve at 10K, 100K, and 1M songs is critical for production deployment.
 
-### 5.5 Limitations
+### 6.5 Limitations
 
 - **Scale**: Full experiments use 6,839 songs. Recall may degrade further at 100K or 1M songs as the embedding space becomes more crowded.
 - **Audio degradation**: Queries are clean re-encodings of indexed audio. Real-world queries would include background noise, microphone distortion, and compression artifacts.
 - **Temporal alignment**: Queries are drawn from the same 1-second grid as the index. A query offset by 0.5 seconds from any indexed window may perform differently.
 - **Song similarity**: The test corpus spans decades and genres. Performance on a corpus of similar-sounding songs (e.g., all classical piano) is unknown.
 
-## 6. Future Work
+## 7. Future Work
 
-1. **Scale testing**: Evaluate recall on 1,000 and 6,966 songs to establish the scaling curve.
+1. **Scale testing**: Evaluate recall at 10K, 100K, and 1M songs to establish the scaling curve toward the 10M target.
 2. **Degraded queries**: Test with additive noise, volume changes, low-pass filtering, and codec compression to simulate real-world recording conditions.
 3. **Temporal robustness**: Query with clips not aligned to the 1-second grid.
 4. **Alternative models**: Compare MERT-v1-330M, HuBERT, Wav2Vec2, and CLAP as backbone encoders.
