@@ -4,7 +4,7 @@
 
 MusicPrint is an experiment to see if a complete Shazam-like system can run entirely on a mobile device. The key finding: a frozen pretrained audio model (MERT-v1-95M) produces embeddings discriminative enough for song identification with no fine-tuning. Combined with k-means clustering, PCA, and binary hashing, the index compresses to 320 bytes per song — 3 GB for 10 million songs. For comparison, spectrogram-based approaches like Shazam typically require 8–24 KB per song.
 
-See [PAPER.md](PAPER.md) for the full write-up and results.
+[**Try the demo**](https://huggingface.co/spaces/alainbrown/musicprint) · [Paper](PAPER.md) · [Dataset](https://huggingface.co/datasets/alainbrown/musicprint-embeddings)
 
 ## Results
 
@@ -70,15 +70,8 @@ Audio files go in `music/` (MP3, FLAC, or WAV in any subdirectory structure).
 ```
 experiments.py          # Reproducible experiments notebook (jupytext)
 PAPER.md                # Research paper
-demo_app/               # Web app for interactive song identification
-  app.py                # Flask backend
-  static/index.html     # Mic recording + file upload UI
-  search.py             # Hamming distance search
-  metadata.py           # Binary metadata reader
-  audio.py              # Audio loading and binarization
 docker/
   Dockerfile.pipeline   # GPU image (MERT, PyTorch, torchaudio)
-  Dockerfile.demo       # CPU image (Flask, pydub)
 docker-compose.yml      # All services
 1_adapter_training/     # Encoder training pipeline (experimental)
 2_vector_index/         # Binary index builder

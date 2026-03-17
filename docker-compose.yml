@@ -120,17 +120,6 @@ services:
     tty: true
     command: tail -f /dev/null
 
-  demo:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.demo
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./release:/app/release:ro
-    environment:
-      - RELEASE_DIR=/app/release
-
 volumes:
   musicprint_data:
   musicprint_logs:
