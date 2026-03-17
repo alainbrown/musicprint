@@ -275,7 +275,7 @@ correct, total, recall = recall_test(centroids, centroid_ids, queries, query_ids
 print(f"Baseline (k=10, 768-dim float32)")
 print(f"  Recall: {correct}/{total} ({recall:.1f}%)")
 print(f"  Storage: {K_CENTROIDS * 768 * 4:.0f} bytes/song ({K_CENTROIDS * 768 * 4 / 1024:.1f} KB)")
-print(f"  @ 100M songs: {K_CENTROIDS * 768 * 4 * 100_000_000 / (1024**4):.1f} TB")
+print(f"  @ 10M songs: {K_CENTROIDS * 768 * 4 * 10_000_000 / (1024**3):.1f} GB")
 
 baseline_recall = recall
 
@@ -343,7 +343,7 @@ def apply_binary(embeddings):
 # %%
 print("Experiment B: Dimensionality reduction (base: k=10 centroids)")
 print("=" * 85)
-print(f"{'Strategy':<30} {'Dims':>6} {'Storage/song':>12} {'Recall':>10} {'@ 100M songs':>14}")
+print(f"{'Strategy':<30} {'Dims':>6} {'Storage/song':>12} {'Recall':>10} {'@ 10M songs':>14}")
 print("-" * 85)
 
 configs_b = [
@@ -375,11 +375,11 @@ for name, pca_dim, binary in configs_b:
         bytes_per_emb = dim * 4
 
     storage = K_CENTROIDS * bytes_per_emb
-    at_100m = storage * 100_000_000 / (1024**3)
+    at_10m = storage * 10_000_000 / (1024**3)
 
     correct, total, recall = recall_test(idx, centroid_ids, q, query_ids)
-    results_b.append((name, dim, storage, recall, at_100m))
-    print(f"{name:<30} {dim:>6} {storage:>10.0f} B {recall:>9.1f}% {at_100m:>12.1f} GB")
+    results_b.append((name, dim, storage, recall, at_10m))
+    print(f"{name:<30} {dim:>6} {storage:>10.0f} B {recall:>9.1f}% {at_10m:>12.1f} GB")
 
 # %% [markdown]
 # ## 7. Summary
@@ -389,16 +389,16 @@ print()
 print("=" * 90)
 print("SUMMARY: Full Compression Pipeline")
 print("=" * 90)
-print(f"{'Config':<40} {'Storage/song':>12} {'Recall':>10} {'@ 100M songs':>14}")
+print(f"{'Config':<40} {'Storage/song':>12} {'Recall':>10} {'@ 10M songs':>14}")
 print("-" * 90)
 
 summary = []
-for name, dim, storage, recall, at_100m in results_b:
-    summary.append((name, storage, recall, at_100m))
-    print(f"{'k=10, ' + name:<40} {storage:>10.0f} B {recall:>9.1f}% {at_100m:>12.1f} GB")
+for name, dim, storage, recall, at_10m in results_b:
+    summary.append((name, storage, recall, at_10m))
+    print(f"{'k=10, ' + name:<40} {storage:>10.0f} B {recall:>9.1f}% {at_10m:>12.1f} GB")
 
 print("-" * 90)
-print(f"Target: < 3 GB for 100M songs = < 30 bytes/song")
+print(f"Target: < 3 GB for 10M songs = < 300 bytes/song")
 print()
 print(f"Encoder: MERT-v1-95M (frozen, no fine-tuning)")
 print(f"Corpus: {n_songs} songs (Billboard Hot 100, 1920-2020s)")

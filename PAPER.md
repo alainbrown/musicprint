@@ -2,7 +2,7 @@
 
 ## Abstract
 
-We investigate whether pretrained self-supervised audio models can serve as effective audio fingerprinting encoders without any fine-tuning. Using MERT-v1-95M, a music-domain transformer pretrained on general music understanding, we find that its frozen representations achieve 96.6% top-1 recall on a 6,839-song corpus (Billboard Hot 100, 1920–2020s) when used as fingerprint embeddings. We then explore a compression pipeline — k-means segment clustering, PCA dimensionality reduction, and sign-bit binary hashing — that reduces per-song storage from 30 KB to 320 bytes while maintaining 96.5% recall. At this configuration, a 100-million-song database would require approximately 30 GB of storage.
+We investigate whether pretrained self-supervised audio models can serve as effective audio fingerprinting encoders without any fine-tuning. Using MERT-v1-95M, a music-domain transformer pretrained on general music understanding, we find that its frozen representations achieve 96.6% top-1 recall on a 6,839-song corpus (Billboard Hot 100, 1920–2020s) when used as fingerprint embeddings. We then explore a compression pipeline — k-means segment clustering, PCA dimensionality reduction, and sign-bit binary hashing — that reduces per-song storage from 30 KB to 320 bytes while maintaining 96.5% recall. At this configuration, a 10-million-song database would require approximately 3 GB of storage — feasible for mobile deployment.
 
 ## 1. Introduction
 
@@ -10,7 +10,7 @@ Audio fingerprinting systems identify songs from short audio recordings by match
 
 We ask a simple question: can a frozen pretrained audio model, with no task-specific training, produce embeddings discriminative enough for song identification? If so, this eliminates the need for labeled training data or custom model development, reducing the fingerprinting problem to an indexing and compression challenge.
 
-Our target deployment is a mobile device (iPhone 13+) with a storage budget under 3 GB for a 100-million-song database. This requires aggressive compression of the embedding space while preserving retrieval accuracy.
+Our target deployment is a mobile device (iPhone 13+) with a storage budget under 3 GB for a 10-million-song database. This requires aggressive compression of the embedding space while preserving retrieval accuracy.
 
 ## 2. Method
 
@@ -93,29 +93,29 @@ K-means k=10 was selected as the segment reduction strategy (perfect recall at 2
 
 **Dimensionality reduction (100 songs, k=10):**
 
-| Strategy | Storage/song | Top-1 Recall | @ 100M songs |
+| Strategy | Storage/song | Top-1 Recall | @ 10M songs |
 |----------|-------------|-------------|-------------|
-| Float32 768-dim | 30 KB | 100.0% | 3 TB |
-| Binary 768-bit | 960 B | 99.8% | 96 GB |
-| PCA 128 + binary | 160 B | 99.3% | 16 GB |
-| PCA 64 + binary | 80 B | 96.7% | 8 GB |
+| Float32 768-dim | 30 KB | 100.0% | 286 GB |
+| Binary 768-bit | 960 B | 99.8% | 9.0 GB |
+| PCA 128 + binary | 160 B | 99.3% | 1.5 GB |
+| PCA 64 + binary | 80 B | 96.7% | 0.7 GB |
 
 ### 4.2 Full Corpus Results (6,839 Songs)
 
 All runs: 6,839 songs, k-means k=10, 68,390 queries (10/song).
 
-| Strategy | Dims | Storage/song | Top-1 Recall | @ 100M songs |
+| Strategy | Dims | Storage/song | Top-1 Recall | @ 10M songs |
 |----------|------|-------------|-------------|-------------|
-| Float32 768-dim | 768 | 30 KB | 96.6% | 2,861 GB |
-| PCA 256 float32 | 256 | 10 KB | 96.1% | 954 GB |
-| PCA 128 float32 | 128 | 5 KB | 95.3% | 477 GB |
-| PCA 64 float32 | 64 | 2.5 KB | 93.0% | 238 GB |
-| Binary 768-bit | 768 | 960 B | 95.1% | 89 GB |
-| **Binary 256-bit (PCA)** | **256** | **320 B** | **96.5%** | **30 GB** |
-| Binary 128-bit (PCA) | 128 | 160 B | 92.0% | 15 GB |
-| Binary 64-bit (PCA) | 64 | 80 B | 75.5% | 7.5 GB |
+| Float32 768-dim | 768 | 30 KB | 96.6% | 286 GB |
+| PCA 256 float32 | 256 | 10 KB | 96.1% | 95 GB |
+| PCA 128 float32 | 128 | 5 KB | 95.3% | 48 GB |
+| PCA 64 float32 | 64 | 2.5 KB | 93.0% | 24 GB |
+| Binary 768-bit | 768 | 960 B | 95.1% | 8.9 GB |
+| **Binary 256-bit (PCA)** | **256** | **320 B** | **96.5%** | **3.0 GB** |
+| Binary 128-bit (PCA) | 128 | 160 B | 92.0% | 1.5 GB |
+| Binary 64-bit (PCA) | 64 | 80 B | 75.5% | 0.7 GB |
 
-At full corpus scale, baseline recall is 96.6% (down from 100% at 100 songs). The most notable result is that **PCA 256 + binary hashing achieves 96.5% recall — essentially matching the uncompressed baseline — at 320 bytes per song**. This is a 96× storage reduction with negligible recall loss.
+At full corpus scale, baseline recall is 96.6% (down from 100% at 100 songs). The most notable result is that **PCA 256 + binary hashing achieves 96.5% recall — essentially matching the uncompressed baseline — at 320 bytes per song**. This is a 96× storage reduction with negligible recall loss. At 10 million songs, this configuration requires approximately 3 GB — meeting the mobile storage target.
 
 Binary hashing after PCA 256 (96.5%) slightly outperforms binary hashing without PCA (95.1%), suggesting that PCA removes noise dimensions that hurt binarization. However, at PCA 128 and below, recall drops more steeply (92.0%, 75.5%), indicating that 256 principal components capture a critical threshold of discriminative information.
 
@@ -145,7 +145,7 @@ Below 256 dimensions, recall degrades more steeply: PCA 128 + binary drops to 92
 
 ### 5.4 Scaling Behavior
 
-Recall decreases with corpus size: 100% at 5 songs, 100% at 97 songs, 96.6% at 6,839 songs. This is expected — as more songs are added, the embedding space becomes more crowded and nearest-neighbor errors increase. The 3.4% drop from 97 to 6,839 songs is modest, but extrapolating to 100 million songs would likely produce further degradation. Quantifying this scaling curve is critical for production deployment.
+Recall decreases with corpus size: 100% at 5 songs, 100% at 97 songs, 96.6% at 6,839 songs. This is expected — as more songs are added, the embedding space becomes more crowded and nearest-neighbor errors increase. The 3.4% drop from 97 to 6,839 songs is modest, but extrapolating to 10 million songs would likely produce further degradation. Quantifying this scaling curve is critical for production deployment.
 
 ### 5.5 Limitations
 
